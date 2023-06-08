@@ -24,6 +24,7 @@ from typing import Callable, Any, Optional
 from flax import linen as nn
 from flax import struct
 from flax.training import train_state
+from flax.training.common_utils import stack_forest
 
 import jax
 from jax import lax
@@ -389,7 +390,7 @@ class TransformerLM(nn.Module):
     return logits.astype(self.config.dtype)
 
 
-def train(config, train_dl, eval_dl=None, lr=1e-4, n_iters=1_000, seed=51, print_every=100):
+def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=51, print_every=1_000):
     eval_config = config.replace(deterministic=True)
     train_iter = iter(train_dl)
 
@@ -411,10 +412,15 @@ def train(config, train_dl, eval_dl=None, lr=1e-4, n_iters=1_000, seed=51, print
 
     rng, dropout_rng = jax.random.split(rng)
     train_metrics = []
+    eval_metrics = []
 
     # compile for training
     c_train_step = jax.jit(
         functools.partial(train_step, config=config)
+    )
+
+    c_eval_step = jax.jit(
+        functools.partial(eval_step, config=eval_config)
     )
 
     for i in range(n_iters):
@@ -423,24 +429,36 @@ def train(config, train_dl, eval_dl=None, lr=1e-4, n_iters=1_000, seed=51, print
         # state, metrics = train_step(state, batch, config, rng=dropout_rng)
         train_metrics.append(metrics)
 
-        if i % print_every == 0:
-          print_last_metric(i, train_metrics)
+        if i % print_every == 0 or i == (n_iters-1):
+            if eval_dl != None:
+                curr_eval_metrics = []
+                for _, batch in zip(range(eval_iters), eval_dl):
+                    metrics = c_eval_step(state, batch)
+                    curr_eval_metrics.append(metrics)
+                curr_eval_metrics = stack_forest(curr_eval_metrics)
+                curr_eval_metrics = jax.tree_util.tree_map(jnp.mean, curr_eval_metrics)
+                eval_metrics.append(curr_eval_metrics)
+                print_metric(i, curr_eval_metrics, is_eval=True)
+            else:
+                print_metric(i, train_metrics[-1])
     
-    print_last_metric(i, train_metrics)
     return state
 
-def print_last_metric(step, metrics):
-    m = metrics[-1]
-    print(f'step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
+def print_metric(step, m, is_eval=False):
+    if is_eval:
+        print(f'EVAL step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
+    else:
+        print(f'TRAIN step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
+
 
 def train_step(state, batch, config, rng=None):
     train_keys = ['inputs', 'inputs_segmentation',
-                  'inputs_position', 'targets']
-    inputs, inputs_positions, inputs_segmentation, targets = [
+                  'inputs_position', 'mask']
+    inputs, inputs_positions, inputs_segmentation, mask = [
         batch.get(k, None) for k in train_keys]
     
-    weights = jnp.where(inputs > 0, 1., 0.)
-    pred_idxs = (jnp.sum(weights, axis=1) - 1).astype(jnp.int32)
+    # weights = jnp.where(inputs > 0, 1., 0.)  # TODO: confirm works correctly with mixed batches
+    # pred_idxs = (jnp.sum(weights, axis=1) - 1).astype(jnp.int32)
     dropout_rng = jax.random.fold_in(rng, state.step)
 
     def loss_fn(params):
@@ -451,34 +469,56 @@ def train_step(state, batch, config, rng=None):
             # inputs_segmentation=inputs_segmentation.reshape(1, -1),
             rngs={'dropout': dropout_rng}
         )
-        pred_logits = logits[np.arange(len(inputs)), pred_idxs]
+        # print('LOGITS', logits.shape)
+        # print('INPUTS', inputs.shape)
+        # print('RAW INP', inputs)
 
         loss = optax.softmax_cross_entropy_with_integer_labels(
-            pred_logits, targets)
-        return jnp.mean(loss), pred_logits
+            logits[...,:-1,:], inputs[..., 1:])
+        
+        # print('LOSS', loss.shape)
+        # print('RAW LOSS BEF', loss)
+        # print('MASK', mask[...,:-1])
+        loss = loss * mask[...,:-1]
+        # print('RAW LOSS', loss.sum(axis=1))
+        return loss.sum(axis=1).mean(), logits
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
     (_, logits), grads = grad_fn(state.params)
     new_state = state.apply_gradients(grads=grads)
 
-    metrics = compute_metrics(logits, targets)
+    metrics = compute_metrics(logits, inputs, mask)
     return new_state, metrics
 
 def eval_step(state, batch, config):
     inputs = batch['inputs']
-    return None
+    mask = batch['mask']
+
+    logits = TransformerLM(config).apply({'params': state.params}, inputs)
+    return compute_metrics(logits, inputs, mask)
 
 @jax.jit
-def compute_metrics(logits, labels):
-    loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
-    loss = jnp.mean(loss)
+def compute_metrics(logits, inputs, mask):
+    pred_logits = logits[...,:-1,:]
+    pred_inputs = inputs[...,1:]
+    pred_mask = mask[...,:-1]
 
-    preds = jnp.argmax(logits, axis=1)
-    acc = jnp.mean(preds == labels)
+    loss = optax.softmax_cross_entropy_with_integer_labels(pred_logits, pred_inputs)
+    loss = loss * pred_mask
+    loss = loss.sum(axis=1).mean()
 
-    probs = jax.nn.softmax(logits)[np.arange(len(logits)), labels]
-    # print('PROBS', probs)
-    conf = jnp.mean(probs)
+    preds = jnp.argmax(pred_logits, axis=-1)
+    acc = jnp.sum((preds == pred_inputs) * pred_mask) / jnp.sum(pred_mask)
+    # print('ACC', acc)
+
+    # probs = jax.nn.softmax(logits)[np.arange(len(logits)), inputs]
+    # print('LOGITS', jax.nn.softmax(pred_logits))
+    # print('INPUTS', pred_inputs)
+    probs = jax.nn.softmax(pred_logits)[...,pred_inputs]
+    probs = jnp.diagonal(probs, axis1=1, axis2=3)
+    probs = jnp.diagonal(probs, axis1=0, axis2=1).T
+    # print('RAW PR', probs * pred_mask)
+    conf = jnp.sum(probs * pred_mask) / jnp.sum(pred_mask)
 
     return {
         'loss': loss,
@@ -488,13 +528,12 @@ def compute_metrics(logits, labels):
 
 config = TransformerConfig(5, 5)
 train_ds = CopyDataset(3, 2)
-train_dl = to_dataloader(train_ds, batch_size=32, num_workers=0, pin_memory=True)
+train_dl = to_dataloader(train_ds, batch_size=8, num_workers=0, pin_memory=True)
 
-state = train(config, train_dl, n_iters=2000, print_every=100)
+state = train(config, train_dl, eval_dl=train_dl, n_iters=5000, print_every=500)
 # %%
-# TODO: apply gradient signal across whole example
 m = TransformerLM(config)
-out = m.apply({'params': state.params}, jnp.array([3,4,3,3,1,3,4,3]).reshape(1, -1), rngs={'dropout': jax.random.PRNGKey(3)})
+out = m.apply({'params': state.params}, jnp.array([4,3,3,1,4,3,3]).reshape(1, -1), rngs={'dropout': jax.random.PRNGKey(3)})
 jnp.argmax(out, -1)[0][-1]
 
 # %%
