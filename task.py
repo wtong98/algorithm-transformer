@@ -3,6 +3,7 @@ A simple copying task
 """
 
 # <codecell>
+import jax.numpy as jnp
 import numpy as np
 from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 
@@ -29,7 +30,6 @@ class CopyDataset(IterableDataset):
     def __iter__(self):
         return self
 
-    # TODO: should examples be scrambled or presented autoregressively?
     def __next__(self):
         rng = np.random.default_rng(self.seed)
         vocab_idxs = [self.tok_to_idx[tok] for tok in self.vocab_toks]
@@ -75,7 +75,10 @@ def pad_examples(exs, pad_tok):
     for i, x in enumerate(xs):
         out[i,:len(x)] = x
     
-    return out, ys
+    return {
+        'inputs': jnp.array(out),
+        'targets': jnp.array(ys)
+    }
 
 # ds = CopyDataset(3,2)
 # exs = [next(ds) for _ in range(3)]
@@ -91,7 +94,6 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     dl = DataLoader(ds, batch_size=batch_size, collate_fn=collate_fn, **kwargs)
     return dl
 
-# TODO: adapt new dataloader to model, write loss <-- STOPPED HERE
 ds = CopyDataset(3, 2)
 dl = to_dataloader(ds, batch_size=5)
 next(iter(dl))

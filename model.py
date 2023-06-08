@@ -18,7 +18,7 @@ limitations under the License.
 """
 
 # <codecell>
-
+import functools
 from typing import Callable, Any, Optional
 
 from flax import linen as nn
@@ -42,12 +42,12 @@ class TransformerConfig:
   share_embeddings: bool = False
   logits_via_embedding: bool = False
   dtype: Any = jnp.float32
-  emb_dim: int = 512
-  num_heads: int = 8
-  num_layers: int = 6
-  qkv_dim: int = 512
-  mlp_dim: int = 2048
-  max_len: int = 2048
+  emb_dim: int = 128
+  num_heads: int = 4
+  num_layers: int = 1
+  qkv_dim: int = 128
+  mlp_dim: int = 512
+  max_len: int = 128
   dropout_rate: float = 0.1
   attention_dropout_rate: float = 0.1
   deterministic: bool = False
@@ -306,7 +306,7 @@ class Decoder(nn.Module):
             y, inputs_positions=inputs_positions)
     y = nn.Dropout(rate=config.dropout_rate)(
         y, deterministic=config.deterministic)
-
+      
     y = y.astype(config.dtype)
 
     # Target-Input Decoder
@@ -389,17 +389,17 @@ class TransformerLM(nn.Module):
     return logits.astype(self.config.dtype)
 
 
-def train(config, train_dl, eval_dl=None, lr=1e-4, n_iters=1_000, seed=51):
+def train(config, train_dl, eval_dl=None, lr=1e-4, n_iters=1_000, seed=51, print_every=100):
     eval_config = config.replace(deterministic=True)
     train_iter = iter(train_dl)
 
     rng = jax.random.PRNGKey(seed)
     rng, init_rng = jax.random.split(rng)
 
-    input_shape = (train_dl.batch_size, train_dl.max_len)
+    input_shape = (train_dl.batch_size, config.max_len)
     model = TransformerLM(eval_config)
     init_var = model.init(init_rng, jnp.ones(input_shape, jnp.float32))
-    print(jax.tree_util.tree_map(lambda x: x.shape, init_var))
+    # print(jax.tree_util.tree_map(lambda x: x.shape, init_var))
 
     optimizer = optax.adam(lr)
     state = train_state.TrainState.create(
@@ -410,41 +410,91 @@ def train(config, train_dl, eval_dl=None, lr=1e-4, n_iters=1_000, seed=51):
     del init_var
 
     rng, dropout_rng = jax.random.split(rng)
-    for _ in range(n_iters):
-        batch = next(train_iter)
-        state, metrics = train_step(state, batch, config, rng=dropout_rng)
-        break
+    train_metrics = []
 
+    # compile for training
+    c_train_step = jax.jit(
+        functools.partial(train_step, config=config)
+    )
+
+    for i in range(n_iters):
+        batch = next(train_iter)
+        state, metrics = c_train_step(state, batch, rng=dropout_rng)
+        # state, metrics = train_step(state, batch, config, rng=dropout_rng)
+        train_metrics.append(metrics)
+
+        if i % print_every == 0:
+          print_last_metric(i, train_metrics)
+    
+    print_last_metric(i, train_metrics)
+    return state
+
+def print_last_metric(step, metrics):
+    m = metrics[-1]
+    print(f'step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
 
 def train_step(state, batch, config, rng=None):
     train_keys = ['inputs', 'inputs_segmentation',
                   'inputs_position', 'targets']
     inputs, inputs_positions, inputs_segmentation, targets = [
         batch.get(k, None) for k in train_keys]
-
-    weights = jnp.where(inputs > 0, 1, 0).astype(jnp.float32)
+    
+    weights = jnp.where(inputs > 0, 1., 0.)
+    pred_idxs = (jnp.sum(weights, axis=1) - 1).astype(jnp.int32)
     dropout_rng = jax.random.fold_in(rng, state.step)
 
     def loss_fn(params):
         logits = TransformerLM(config).apply(
             {'params': params},
-            inputs.reshape(1, -1),
-            inputs_positions=inputs_positions.reshape(1, -1),
-            inputs_segmentation=inputs_segmentation.reshape(1, -1),
+            inputs,
+            # inputs_positions=inputs_positions.reshape(1, -1),
+            # inputs_segmentation=inputs_segmentation.reshape(1, -1),
             rngs={'dropout': dropout_rng}
         )
-        print('INPUT', inputs.shape)
-        print('LOGITS', logits.shape)
+        pred_logits = logits[np.arange(len(inputs)), pred_idxs]
 
-        loss = None  # TODO: plug in correct value <-- STOPPED HERE
-        return loss
+        loss = optax.softmax_cross_entropy_with_integer_labels(
+            pred_logits, targets)
+        return jnp.mean(loss), pred_logits
 
-    loss_fn(state.params)
-    return None, None
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+    (_, logits), grads = grad_fn(state.params)
+    new_state = state.apply_gradients(grads=grads)
 
+    metrics = compute_metrics(logits, targets)
+    return new_state, metrics
+
+def eval_step(state, batch, config):
+    inputs = batch['inputs']
+    return None
+
+@jax.jit
+def compute_metrics(logits, labels):
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+    loss = jnp.mean(loss)
+
+    preds = jnp.argmax(logits, axis=1)
+    acc = jnp.mean(preds == labels)
+
+    probs = jax.nn.softmax(logits)[np.arange(len(logits)), labels]
+    # print('PROBS', probs)
+    conf = jnp.mean(probs)
+
+    return {
+        'loss': loss,
+        'accuracy': acc,
+        'confidence': conf
+    }
 
 config = TransformerConfig(5, 5)
 train_ds = CopyDataset(3, 2)
-train_dl = to_dataloader(train_ds, 7, batch_size=5)
+train_dl = to_dataloader(train_ds, batch_size=32, num_workers=0, pin_memory=True)
 
-train(config, train_dl)
+state = train(config, train_dl, n_iters=2000, print_every=100)
+# %%
+# TODO: apply gradient signal across whole example
+m = TransformerLM(config)
+out = m.apply({'params': state.params}, jnp.array([3,4,3,3,1,3,4,3]).reshape(1, -1), rngs={'dropout': jax.random.PRNGKey(3)})
+jnp.argmax(out, -1)[0][-1]
+
+# %%
