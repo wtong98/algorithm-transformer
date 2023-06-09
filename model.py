@@ -1,5 +1,5 @@
 """
-Adapted from: https://github.com/google/flax/blob/main/examples/lm1b/models.py
+Adapted from: https://github.com/google/flax/blob/main/examples/lm1b
 
 License notice:
 Copyright 2023 The Flax Authors.
@@ -299,8 +299,8 @@ class Decoder(nn.Module):
       output_embed = self.shared_embedding
 
     y = inputs.astype('int32')
-    if not config.decode:
-      y = shift_inputs(y, segment_ids=inputs_segmentation)
+    # if not config.decode:
+    #   y = shift_inputs(y, segment_ids=inputs_segmentation)
     y = output_embed(y)
     y = AddPositionEmbs(
         config=config, decode=config.decode, name='posembed_output')(
@@ -490,12 +490,30 @@ def train_step(state, batch, config, rng=None):
     metrics = compute_metrics(logits, inputs, mask)
     return new_state, metrics
 
+
 def eval_step(state, batch, config):
     inputs = batch['inputs']
     mask = batch['mask']
 
     logits = TransformerLM(config).apply({'params': state.params}, inputs)
     return compute_metrics(logits, inputs, mask)
+
+
+def predict(state, prompt, config, eos_id):
+    assert len(prompt.shape) == 1
+    prompt = prompt.reshape(1, -1)
+
+    m = TransformerLM(config)
+    for _ in range(config.max_len - len(prompt)):
+        logits = m.apply({'params': state.params}, prompt)
+        nxt_tok = jnp.argmax(logits, -1)[0,-1].reshape(1, 1)
+        prompt = jnp.append(prompt, nxt_tok, axis=1)
+
+        if nxt_tok.item() == eos_id:
+            break
+
+    return prompt.flatten()
+
 
 @jax.jit
 def compute_metrics(logits, inputs, mask):
@@ -532,8 +550,10 @@ train_dl = to_dataloader(train_ds, batch_size=8, num_workers=0, pin_memory=True)
 
 state = train(config, train_dl, eval_dl=train_dl, n_iters=5000, print_every=500)
 # %%
-m = TransformerLM(config)
-out = m.apply({'params': state.params}, jnp.array([4,3,3,1,4,3,3]).reshape(1, -1), rngs={'dropout': jax.random.PRNGKey(3)})
-jnp.argmax(out, -1)[0][-1]
+pred_config = config.replace(deterministic=True)
+c_predict = jax.jit(
+    functools.partial(predict, config=pred_config, eos_id=train_ds.tok_to_idx['END'])
+)
 
 # %%
+c_predict(state, jnp.array([4,4,3,1]), pred_config, train_ds.tok_to_idx['END'])
