@@ -10,9 +10,14 @@ from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 start_char = 97    # ASCII 97 corresponds to 'a'
 
 class CopyDataset(IterableDataset):
-    def __init__(self, length, vocab_size) -> None:
+    def __init__(self, lengths, probs=None, vocab_size=2) -> None:
         self.vocab_size = vocab_size
-        self.length = length
+
+        try:
+            self.lengths = list(lengths)
+        except TypeError:
+            self.lengths = [lengths]
+        self.probs = probs
 
         self.vocab_toks = [chr(97 + i) for i in range(vocab_size)]
         self.idx_to_tok = [
@@ -33,8 +38,9 @@ class CopyDataset(IterableDataset):
     def __next__(self):
         rng = np.random.default_rng(self.seed)
         vocab_idxs = [self.tok_to_idx[tok] for tok in self.vocab_toks]
+        length = rng.choice(self.lengths, p=self.probs)
 
-        pattern = rng.choice(vocab_idxs, size=self.length)
+        pattern = rng.choice(vocab_idxs, size=length)
         pattern_mask = np.ones(len(pattern))
         xs = np.concatenate((pattern, [self.tok_to_idx['GO']], pattern, [self.tok_to_idx['END']]))
         pred_mask = np.concatenate((
@@ -63,37 +69,11 @@ def pad_examples(exs, pad_tok):
 
 
 def to_dataloader(ds, batch_size=32, **kwargs):
-    # def collate_fn(exs): return pack_examples(exs, 
-    #     max_len=max_len, 
-    #     batch_size=batch_size, 
-    #     pad_tok=ds.tok_to_idx['PAD'])
     def collate_fn(exs): return pad_examples(exs, 
         pad_tok=ds.tok_to_idx['PAD'])
     dl = DataLoader(ds, batch_size=batch_size, collate_fn=collate_fn, **kwargs)
     return dl
 
-# def pack_examples(exs, max_len, batch_size, pad_tok):
-#     max_pack_len = max_len * batch_size
-#     xs, ys = zip(*exs)
-
-#     xs_len = [len(x) for x in xs]
-#     n_final_pad = max_pack_len - np.sum(xs_len)
-#     final_pad = [[pad_tok] * n_final_pad]
-#     xs_pack = np.concatenate(list(xs) + final_pad)
-
-#     xs_seg = [[i+1] * x_len for i, x_len in enumerate(xs_len)]
-#     xs_seg = np.concatenate(xs_seg + final_pad)
-
-#     xs_pos = [np.arange(x_len) for x_len in xs_len]
-#     xs_pos = np.concatenate(xs_pos + final_pad)
-
-#     return {
-#         'inputs': xs_pack,
-#         'inputs_segmentation': xs_seg,
-#         'inputs_position': xs_pos,
-#         'targets': ys
-#     }
-
-ds = CopyDataset(3, 2)
+ds = CopyDataset([2,3])
 dl = to_dataloader(ds, batch_size=5)
 next(iter(dl))

@@ -21,6 +21,7 @@ limitations under the License.
 import functools
 from typing import Callable, Any, Optional
 
+
 from flax import linen as nn
 from flax import struct
 from flax.training import train_state
@@ -29,6 +30,7 @@ from flax.training.common_utils import stack_forest
 import jax
 from jax import lax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import optax
 
@@ -39,12 +41,11 @@ from task import *
 class TransformerConfig:
   """Global hyperparameters used to minimize obnoxious kwarg plumbing."""
   vocab_size: int
-  output_vocab_size: int
   share_embeddings: bool = False
   logits_via_embedding: bool = False
   dtype: Any = jnp.float32
   emb_dim: int = 128
-  num_heads: int = 4
+  num_heads: int = 1
   num_layers: int = 1
   qkv_dim: int = 128
   mlp_dim: int = 512
@@ -56,25 +57,6 @@ class TransformerConfig:
   kernel_init: Callable = nn.initializers.xavier_uniform()
   bias_init: Callable = nn.initializers.normal(stddev=1e-6)
   posemb_init: Optional[Callable] = None
-
-
-def shift_right(x, axis=1):
-  """Shift the input to the right by padding and slicing on axis."""
-  pad_widths = [(0, 0)] * len(x.shape)
-  pad_widths[axis] = (1, 0)
-  padded = jnp.pad(
-      x, pad_widths, mode='constant', constant_values=x.dtype.type(0))
-  return lax.dynamic_slice_in_dim(padded, 0, padded.shape[axis] - 1, axis)
-
-
-def shift_inputs(x, segment_ids=None, axis=1):
-  """Shift inputs and replace EOS by 0 for packed inputs."""
-  shifted = shift_right(x, axis=axis)
-  # For packed targets, the first shifted token of a new sequence is made
-  # 0, rather than being the EOS token for the last sequence.
-  if segment_ids is not None:
-    shifted *= (segment_ids == shift_right(segment_ids, axis=axis))
-  return shifted
 
 
 def sinusoidal_init(max_len=2048,
@@ -217,8 +199,7 @@ class EncoderDecoder1DBlock(nn.Module):
   @nn.compact
   def __call__(self,
                inputs,
-               decoder_mask=None,
-               encoder_decoder_mask=None):
+               decoder_mask=None):
     """Applies EncoderDecoder1DBlock module.
 
     Args:
@@ -234,6 +215,8 @@ class EncoderDecoder1DBlock(nn.Module):
     # Decoder block.
     assert inputs.ndim == 3
     x = nn.LayerNorm(dtype=config.dtype)(inputs)
+    self.sow('intermediates', 'pre_attention', x)
+    self.sow('intermediates', 'mask', decoder_mask)
     x = nn.SelfAttention(
         num_heads=config.num_heads,
         dtype=config.dtype,
@@ -245,6 +228,7 @@ class EncoderDecoder1DBlock(nn.Module):
         dropout_rate=config.attention_dropout_rate,
         deterministic=config.deterministic,
         decode=config.decode)(x, decoder_mask)
+    self.sow('intermediates', 'post_attention', x)
     x = nn.Dropout(rate=config.dropout_rate)(
         x, deterministic=config.deterministic)
     x = x + inputs
@@ -271,8 +255,7 @@ class Decoder(nn.Module):
                inputs,
                inputs_positions=None,
                inputs_segmentation=None,
-               decoder_mask=None,
-               encoder_decoder_mask=None):
+               decoder_mask=None):
     """Applies Transformer model on the inputs.
 
     Args:
@@ -292,18 +275,16 @@ class Decoder(nn.Module):
     # Target Embedding
     if self.shared_embedding is None:
       output_embed = nn.Embed(
-          num_embeddings=config.output_vocab_size,
+          num_embeddings=config.vocab_size,
           features=config.emb_dim,
           embedding_init=nn.initializers.normal(stddev=1.0))
     else:
       output_embed = self.shared_embedding
 
     y = inputs.astype('int32')
-    # if not config.decode:
-    #   y = shift_inputs(y, segment_ids=inputs_segmentation)
     y = output_embed(y)
     y = AddPositionEmbs(
-        config=config, decode=config.decode, name='posembed_output')(
+        config=config, decode=config.decode, name='PositionEmb')(
             y, inputs_positions=inputs_positions)
     y = nn.Dropout(rate=config.dropout_rate)(
         y, deterministic=config.deterministic)
@@ -313,11 +294,10 @@ class Decoder(nn.Module):
     # Target-Input Decoder
     for lyr in range(config.num_layers):
       y = EncoderDecoder1DBlock(
-          config=config, name=f'encoderdecoderblock_{lyr}')(
+          config=config, name=f'TransformerBlock_{lyr}')(
               y,
-              decoder_mask=decoder_mask,
-              encoder_decoder_mask=encoder_decoder_mask)
-    y = nn.LayerNorm(dtype=config.dtype, name='encoderdecoder_norm')(y)
+              decoder_mask=decoder_mask)
+    y = nn.LayerNorm(dtype=config.dtype, name='FinalNorm')(y)
 
     # Decoded Logits
     if config.logits_via_embedding:
@@ -327,11 +307,11 @@ class Decoder(nn.Module):
       logits = logits / jnp.sqrt(y.shape[-1])
     else:
       logits = nn.Dense(
-          config.output_vocab_size,
+          config.vocab_size,
           dtype=config.dtype,
           kernel_init=config.kernel_init,
           bias_init=config.bias_init,
-          name='logitdense')(
+          name='LogitDense')(
               y)
     return logits
 
@@ -381,12 +361,11 @@ class TransformerLM(nn.Module):
               dtype=config.dtype))
 
     logits = Decoder(
-        config=config, shared_embedding=None, name='decoder')(
+        config=config, shared_embedding=None, name='Decoder')(
             inputs,
             inputs_positions=inputs_positions,
             inputs_segmentation=inputs_segmentation,
-            decoder_mask=decoder_mask,
-            encoder_decoder_mask=None)
+            decoder_mask=decoder_mask)
     return logits.astype(self.config.dtype)
 
 
@@ -544,16 +523,58 @@ def compute_metrics(logits, inputs, mask):
         'confidence': conf
     }
 
-config = TransformerConfig(5, 5)
-train_ds = CopyDataset(3, 2)
-train_dl = to_dataloader(train_ds, batch_size=8, num_workers=0, pin_memory=True)
+config = TransformerConfig(5)
+train_ds = CopyDataset([1, 2, 3, 4])
+train_dl = to_dataloader(train_ds, batch_size=32, num_workers=0, pin_memory=True)
 
+# <codecell>
 state = train(config, train_dl, eval_dl=train_dl, n_iters=5000, print_every=500)
+
 # %%
 pred_config = config.replace(deterministic=True)
-c_predict = jax.jit(
-    functools.partial(predict, config=pred_config, eos_id=train_ds.tok_to_idx['END'])
-)
+predict(state, jnp.array([3,3,4,1]), pred_config, train_ds.tok_to_idx['END'])
 
 # %%
-c_predict(state, jnp.array([4,4,3,1]), pred_config, train_ds.tok_to_idx['END'])
+m = TransformerLM(pred_config)
+_, intm = m.apply({'params': state.params}, jnp.array([3,3,4,1,3,3,4]).reshape(1, -1), mutable='intermediates')
+x = intm['intermediates']['Decoder']['TransformerBlock_0']['pre_attention'][0]
+x_out = intm['intermediates']['Decoder']['TransformerBlock_0']['post_attention'][0]
+mask = intm['intermediates']['Decoder']['TransformerBlock_0']['mask'][0]
+
+att = state.params['Decoder']['TransformerBlock_0']['SelfAttention_0']
+wq = att['query']['kernel']
+wk = att['key']['kernel']
+wv = att['value']['kernel']
+w_out = att['out']['kernel']
+
+# jax.tree_map(lambda x: x.shape, state.params)
+x.shape
+wq.shape
+
+query = jnp.einsum('...lf,fhd->...lhd', x, wq)
+key = jnp.einsum('...lf,fhd->...lhd', x, wk)
+value = jnp.einsum('...lf,fhd->...lhd', x, wv)
+
+depth = query.shape[-1]
+query /= jnp.sqrt(depth)
+attn_weights = jnp.einsum('...qhd,...khd->...hqk', query, key)
+
+attn_weights = jnp.where(mask, attn_weights, -99999)
+attn_weights = jax.nn.softmax(attn_weights)
+attn_out = jnp.einsum('...hqk,...khd->...qhd', attn_weights, value)
+
+attn_out = jnp.einsum('...lhd,hdf->...lf', attn_out, w_out)
+attn_weights.shape
+# jnp.sum(attn_out == x_out)
+
+plt.imshow(attn_weights[0,0])
+plt.gca().set_xticklabels(['0', 'a', 'a', 'b', 'GO', 'a', 'a', 'b'])
+plt.gca().set_yticklabels(['0', 'a', 'a', 'b', 'GO', 'a', 'a', 'b'])
+plt.savefig('fig/tmp_attention.png')
+# attn_weights.shape
+
+
+
+
+
+# %%
