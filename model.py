@@ -44,15 +44,15 @@ class TransformerConfig:
   share_embeddings: bool = False
   logits_via_embedding: bool = False
   dtype: Any = jnp.float32
-  emb_dim: int = 128
+  emb_dim: int = 32
   num_heads: int = 1
   num_layers: int = 1
-  qkv_dim: int = 128
-  mlp_dim: int = 512
+  qkv_dim: int = 32
+  mlp_dim: int = 128
   max_len: int = 128
-  dropout_rate: float = 0.1
-  attention_dropout_rate: float = 0.1
-  deterministic: bool = False
+  dropout_rate: float = 0.
+  attention_dropout_rate: float = 0.
+  deterministic: bool = True
   decode: bool = False
   kernel_init: Callable = nn.initializers.xavier_uniform()
   bias_init: Callable = nn.initializers.normal(stddev=1e-6)
@@ -87,6 +87,42 @@ def sinusoidal_init(max_len=2048,
     return jnp.array(pe)
 
   return init
+
+
+class SingleHeadSelfAttention(nn.Module):
+    """Single head self attention, with some custom sauce.
+    
+    Args:
+      config: TransformerConfig dataclass with hyperparameters
+    """
+
+    config: TransformerConfig
+
+    @nn.compact
+    def __call__(self, inputs, mask):
+        dense = functools.partial(
+            nn.Dense,
+            features=config.qkv_dim,
+            dtype=config.dtype,
+            param_dtype=config.dtype,
+            kernel_init=config.kernel_init,
+            bias_init=config.bias_init)
+        
+        query = dense(name='query')(inputs)
+        key = dense(name='key')(inputs)
+        value = dense(name='value')(inputs)
+
+        depth = query.shape[-1]
+        query /= jnp.sqrt(depth)
+
+        attn_weights = jnp.einsum('...qd,...kd->...qk', query, key)
+
+        attn_weights = jnp.where(mask.squeeze(), attn_weights, -999999)
+        attn_weights = jax.nn.softmax(attn_weights)
+        self.sow('intermediates', 'attention_weights', attn_weights)
+
+        attn_out = attn_weights @ value
+        return attn_out
 
 
 class AddPositionEmbs(nn.Module):
@@ -127,6 +163,7 @@ class AddPositionEmbs(nn.Module):
       pos_embedding = sinusoidal_init(max_len=config.max_len)(None,
                                                               pos_emb_shape,
                                                               None)
+      self.sow('intermediates', 'pos', pos_embedding)
     else:
       pos_embedding = self.param('pos_embedding', config.posemb_init,
                                  pos_emb_shape)
@@ -214,30 +251,33 @@ class EncoderDecoder1DBlock(nn.Module):
 
     # Decoder block.
     assert inputs.ndim == 3
-    x = nn.LayerNorm(dtype=config.dtype)(inputs)
+    # x = nn.LayerNorm(dtype=config.dtype)(inputs)
+    x = inputs
     self.sow('intermediates', 'pre_attention', x)
     self.sow('intermediates', 'mask', decoder_mask)
-    x = nn.SelfAttention(
-        num_heads=config.num_heads,
-        dtype=config.dtype,
-        qkv_features=config.qkv_dim,
-        kernel_init=config.kernel_init,
-        bias_init=config.bias_init,
-        use_bias=False,
-        broadcast_dropout=False,
-        dropout_rate=config.attention_dropout_rate,
-        deterministic=config.deterministic,
-        decode=config.decode)(x, decoder_mask)
+    # x = nn.SelfAttention(
+    #     num_heads=config.num_heads,
+    #     dtype=config.dtype,
+    #     qkv_features=config.qkv_dim,
+    #     kernel_init=config.kernel_init,
+    #     bias_init=config.bias_init,
+    #     use_bias=False,
+    #     broadcast_dropout=False,
+    #     dropout_rate=config.attention_dropout_rate,
+    #     deterministic=config.deterministic,
+    #     decode=config.decode)(x, decoder_mask)
+    x = SingleHeadSelfAttention(config)(x, decoder_mask)
     self.sow('intermediates', 'post_attention', x)
     x = nn.Dropout(rate=config.dropout_rate)(
         x, deterministic=config.deterministic)
     x = x + inputs
 
     # MLP block.
-    z = nn.LayerNorm(dtype=config.dtype)(x)
-    z = MlpBlock(config=config)(z)
+    # z = nn.LayerNorm(dtype=config.dtype)(x)
+    # z = MlpBlock(config=config)(z)
 
-    return x + z
+    # return x + z
+    return x
 
 
 class Decoder(nn.Module):
@@ -297,7 +337,7 @@ class Decoder(nn.Module):
           config=config, name=f'TransformerBlock_{lyr}')(
               y,
               decoder_mask=decoder_mask)
-    y = nn.LayerNorm(dtype=config.dtype, name='FinalNorm')(y)
+    # y = nn.LayerNorm(dtype=config.dtype, name='FinalNorm')(y)
 
     # Decoded Logits
     if config.logits_via_embedding:
@@ -523,8 +563,9 @@ def compute_metrics(logits, inputs, mask):
         'confidence': conf
     }
 
-config = TransformerConfig(5)
-train_ds = CopyDataset([1, 2, 3, 4])
+n_symbols = 2
+config = TransformerConfig(n_symbols + 3, deterministic=True)
+train_ds = CopyDataset(range(1, 6+1), vocab_size=n_symbols)
 train_dl = to_dataloader(train_ds, batch_size=32, num_workers=0, pin_memory=True)
 
 # <codecell>
@@ -535,11 +576,73 @@ pred_config = config.replace(deterministic=True)
 predict(state, jnp.array([3,3,4,1]), pred_config, train_ds.tok_to_idx['END'])
 
 # %%
+def get_attn_weights(seq, state, config, n_layers=2):
+    all_weights = []
+
+    for i in range(n_layers):
+        m = TransformerLM(config)
+        _, intm = m.apply({'params': state.params}, jnp.array(seq).reshape(1, -1), mutable='intermediates')
+        x = intm['intermediates']['Decoder'][f'TransformerBlock_{i}']['pre_attention'][0]
+        mask = intm['intermediates']['Decoder'][f'TransformerBlock_{i}']['mask'][0]
+
+        att = state.params['Decoder'][f'TransformerBlock_{i}']['SingleHeadSelfAttention_0']
+        wq = att['query']['kernel']
+        wk = att['key']['kernel']
+
+        query = jnp.einsum('...lf,fd->...ld', x, wq)
+        key = jnp.einsum('...lf,fd->...ld', x, wk)
+
+        depth = query.shape[-1]
+        query /= jnp.sqrt(depth)
+        attn_weights = jnp.einsum('...qhd,...khd->...hqk', query, key)
+        # attn_weights = x.squeeze() @ x.squeeze().T
+
+        attn_weights = jnp.where(mask, attn_weights, -99999)
+        attn_weights = jax.nn.softmax(attn_weights)
+
+        all_weights.append(attn_weights.squeeze())
+
+    all_weights = jnp.stack(all_weights)
+    return all_weights
+
+
+def plot_attn_weights(attn_weights, seq, idx_to_tok):
+    n_layers = attn_weights.shape[0]
+    fig, axs = plt.subplots(1, n_layers, figsize=(4 * n_layers, 4))
+
+    if n_layers == 1:
+      axs = [axs]
+
+    for i, (attn, ax) in enumerate(zip(attn_weights, axs)):
+        ax.imshow(attn)
+        ax.set_xticks(np.arange(len(seq)))
+        ax.set_xticklabels([idx_to_tok[idx] for idx in seq])
+        ax.set_yticks(np.arange(len(seq)))
+        ax.set_yticklabels([idx_to_tok[idx] for idx in seq])
+
+        ax.set_xlabel('Token')
+        ax.set_ylabel('Time')
+        ax.set_title(f'Layer {i+1}')
+    
+    fig.tight_layout()
+    
+
+seq = [3,3,4,3,4,1,3,3,4,3,4]
+attn_weights = get_attn_weights(seq, state, pred_config, n_layers=1)
+plot_attn_weights(attn_weights, seq, train_ds.idx_to_tok)
+
+# plt.savefig('fig/one_layer_attn.png')
+
+# <codecell>
 m = TransformerLM(pred_config)
-_, intm = m.apply({'params': state.params}, jnp.array([3,3,4,1,3,3,4]).reshape(1, -1), mutable='intermediates')
+# _, intm = m.apply({'params': state.params}, jnp.array([3,3,4,3,3,4,1,3,3,4,3,3,4]).reshape(1, -1), mutable='intermediates')
+# _, intm = m.apply({'params': state.params}, jnp.array([3,3,4,3,3,1,3,3,4,3,3]).reshape(1, -1), mutable='intermediates')
+_, intm = m.apply({'params': state.params}, jnp.array([3,3,3,3,3,3,3,3,3,1,3,3]).reshape(1, -1), mutable='intermediates')
 x = intm['intermediates']['Decoder']['TransformerBlock_0']['pre_attention'][0]
 x_out = intm['intermediates']['Decoder']['TransformerBlock_0']['post_attention'][0]
 mask = intm['intermediates']['Decoder']['TransformerBlock_0']['mask'][0]
+pos = intm['intermediates']['Decoder']['PositionEmb']['pos'][0]
+
 
 att = state.params['Decoder']['TransformerBlock_0']['SelfAttention_0']
 wq = att['query']['kernel']
@@ -550,6 +653,8 @@ w_out = att['out']['kernel']
 # jax.tree_map(lambda x: x.shape, state.params)
 x.shape
 wq.shape
+
+# x = jnp.ones(x.shape)
 
 query = jnp.einsum('...lf,fhd->...lhd', x, wq)
 key = jnp.einsum('...lf,fhd->...lhd', x, wk)
@@ -567,10 +672,20 @@ attn_out = jnp.einsum('...lhd,hdf->...lf', attn_out, w_out)
 attn_weights.shape
 # jnp.sum(attn_out == x_out)
 
-plt.imshow(attn_weights[0,0])
-plt.gca().set_xticklabels(['0', 'a', 'a', 'b', 'GO', 'a', 'a', 'b'])
-plt.gca().set_yticklabels(['0', 'a', 'a', 'b', 'GO', 'a', 'a', 'b'])
-plt.savefig('fig/tmp_attention.png')
+# QK = wq.squeeze() @ wk.squeeze().T
+qk = query.squeeze() @ key.squeeze().T
+
+# qk = x.squeeze() @ x.squeeze().T
+qk = jnp.where(mask.squeeze(), qk, -99999)
+qk = jax.nn.softmax(qk)
+plt.imshow(qk)
+
+# plt.imshow(attn_weights[0,0])
+# plt.gca().set_xticks(np.arange(9))
+# plt.gca().set_yticks(np.arange(9))
+# plt.gca().set_xticklabels([ 'a', 'a', 'b', 'a', 'GO',  'a', 'a', 'b', 'a', ])
+# plt.gca().set_yticklabels([ 'a', 'a', 'b', 'a', 'GO',  'a', 'a', 'b', 'a', ])
+# plt.savefig('fig/tmp_attention.png')
 # attn_weights.shape
 
 
