@@ -10,14 +10,19 @@ from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 start_char = 97    # ASCII 97 corresponds to 'a'
 
 class CopyDataset(IterableDataset):
-    def __init__(self, lengths, probs=None, vocab_size=2) -> None:
+    def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False) -> None:
         self.vocab_size = vocab_size
+        self.weight_prop = weight_prop
 
         try:
             self.lengths = list(lengths)
         except TypeError:
             self.lengths = [lengths]
+
         self.probs = probs
+        if self.probs == None and self.weight_prop:
+            weights = np.array(self.lengths)
+            self.probs = weights / np.sum(weights)
 
         self.vocab_toks = [chr(97 + i) for i in range(vocab_size)]
         self.idx_to_tok = [
@@ -74,6 +79,7 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     dl = DataLoader(ds, batch_size=batch_size, collate_fn=collate_fn, **kwargs)
     return dl
 
-ds = CopyDataset([2,3])
-dl = to_dataloader(ds, batch_size=5)
-next(iter(dl))
+if __name__ == '__main__':
+    ds = CopyDataset([1,3], weight_prop=True)
+    dl = to_dataloader(ds, batch_size=8)
+    print(next(iter(dl)))
