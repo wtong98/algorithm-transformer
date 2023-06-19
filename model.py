@@ -18,6 +18,9 @@ limitations under the License.
 """
 
 # <codecell>
+# import os
+# os.environ['JAX_PLATFORMS'] = 'cpu'
+
 import functools
 import os.path
 import shutil
@@ -60,6 +63,8 @@ class TransformerConfig:
     kernel_init: Callable = nn.initializers.xavier_uniform()
     bias_init: Callable = nn.initializers.normal(stddev=1e-6)
     posemb_init: Optional[Callable] = None
+    use_label_embed: bool = False
+    max_item_label: int = -1
 
 
 def sinusoidal_init(max_len=2048,
@@ -166,30 +171,41 @@ class AddPositionEmbs(nn.Module):
             pos_embedding = sinusoidal_init(max_len=config.max_len)(None,
                                                                     pos_emb_shape,
                                                                     None)
-            self.sow('intermediates', 'pos', pos_embedding)
         else:
-            pos_embedding = self.param('pos_embedding', config.posemb_init,
-                                                                 pos_emb_shape)
+            pos_embedding = self.param('pos_embedding', config.posemb_init, pos_emb_shape)
         pe = pos_embedding[:, :length, :]
 
         # We use a cache position index for tracking decoding position.
         if self.decode:
             is_initialized = self.has_variable('cache', 'cache_index')
-            cache_index = self.variable('cache', 'cache_index',
-                                                                    lambda: jnp.array(0, dtype=jnp.uint32))
+            cache_index = self.variable('cache', 'cache_index', lambda: jnp.array(0, dtype=jnp.uint32))
             if is_initialized:
                 i = cache_index.value
                 cache_index.value = i + 1
                 _, _, df = pos_embedding.shape
                 pe = lax.dynamic_slice(pos_embedding,
-                                                             jnp.array((0, i, 0)),
-                                                             (1, 1, df))
+                                        jnp.array((0, i, 0)),
+                                        (1, 1, df))
         if inputs_positions is None:
             # normal unpacked case:
             return inputs + pe
         else:
             # for packed data we need to use known position indices:
             return inputs + jnp.take(pe[0], inputs_positions, axis=0)
+
+class AddLabelItemEmbs(nn.Module):
+
+    config: TransformerConfig
+
+    @nn.compact
+    def __call__(self, inputs, labels) -> Any:
+        
+        emb = nn.Embed(
+            num_embeddings=config.max_item_label + 1,
+            features=config.emb_dim,
+            embedding_init=nn.initializers.normal(stddev=1.0))(labels)
+
+        return inputs + emb
 
 
 class MlpBlock(nn.Module):
@@ -294,6 +310,7 @@ class Decoder(nn.Module):
     @nn.compact
     def __call__(self,
                 inputs,
+                labels=None,
                 inputs_positions=None,
                 inputs_segmentation=None,
                 decoder_mask=None):
@@ -324,9 +341,12 @@ class Decoder(nn.Module):
 
         y = inputs.astype('int32')
         y = output_embed(y)
-        y = AddPositionEmbs(
-            config=config, decode=config.decode, name='PositionEmb')(
-                    y, inputs_positions=inputs_positions)
+        if config.use_label_embed:
+            y = AddLabelItemEmbs(config=config)(y, labels)
+        else:
+            y = AddPositionEmbs(
+                config=config, decode=config.decode, name='PositionEmb')(
+                        y, inputs_positions=inputs_positions)
         y = nn.Dropout(rate=config.dropout_rate)(
             y, deterministic=config.deterministic)
             
@@ -348,7 +368,7 @@ class Decoder(nn.Module):
             logits = logits / jnp.sqrt(y.shape[-1])
         else:
             logits = nn.Dense(
-                config.vocab_size,
+                config.vocab_size + config.max_item_label + 1,
                 dtype=config.dtype,
                 kernel_init=config.kernel_init,
                 bias_init=config.bias_init,
@@ -367,6 +387,7 @@ class TransformerLM(nn.Module):
     @nn.compact
     def __call__(self,
                 inputs,
+                labels=None,
                 inputs_positions=None,
                 inputs_segmentation=None):
         """Applies TransformerLM on the inputs.
@@ -403,6 +424,7 @@ class TransformerLM(nn.Module):
         logits = Decoder(
             config=config, shared_embedding=None, name='Decoder')(
                     inputs,
+                    labels=labels,
                     inputs_positions=inputs_positions,
                     inputs_segmentation=inputs_segmentation,
                     decoder_mask=decoder_mask)
@@ -432,7 +454,8 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
 
     input_shape = (train_dl.batch_size, config.max_len)
     model = TransformerLM(eval_config)
-    init_var = model.init(init_rng, jnp.ones(input_shape, jnp.float32))
+
+    init_var = model.init(init_rng, jnp.ones(input_shape, jnp.float32), labels=jnp.ones(input_shape, jnp.int32))
 
     optimizer = optax.adamw(lr)
     state = train_state.TrainState.create(
@@ -488,8 +511,8 @@ def print_metric(step, m, is_eval=False):
 
 
 def train_step(state, batch, config, rng=None):
-    train_keys = ['inputs', 'mask']
-    inputs, mask = [batch.get(k, None) for k in train_keys]
+    train_keys = ['inputs', 'labels', 'mask']
+    inputs, labels, mask = [batch.get(k, None) for k in train_keys]
     
     dropout_rng = jax.random.fold_in(rng, state.step)
 
@@ -497,28 +520,38 @@ def train_step(state, batch, config, rng=None):
         logits = TransformerLM(config).apply(
             {'params': params},
             inputs,
+            labels=labels,
             rngs={'dropout': dropout_rng}
         )
-        loss = optax.softmax_cross_entropy_with_integer_labels(
-            logits[...,:-1,:], inputs[..., 1:])
         
+        tok_logits, label_logits = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
+        loss = optax.softmax_cross_entropy_with_integer_labels(
+            tok_logits[...,:-1,:], inputs[..., 1:])
+        
+        if config.use_label_embed:
+            label_loss = optax.softmax_cross_entropy_with_integer_labels(
+                label_logits[...,:-1,:], labels[...,1:]
+            )
+            loss += label_loss
+
         loss = loss * mask[...,:-1]
+
         return loss.sum(axis=1).mean(), logits
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
     (_, logits), grads = grad_fn(state.params)
     new_state = state.apply_gradients(grads=grads)
 
-    metrics = compute_metrics(logits, inputs, mask)
+    metrics = compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
     return new_state, metrics
 
 
 def eval_step(state, batch, config):
-    inputs = batch['inputs']
-    mask = batch['mask']
+    train_keys = ['inputs', 'labels', 'mask']
+    inputs, labels, mask = [batch.get(k, None) for k in train_keys]
 
-    logits = TransformerLM(config).apply({'params': state.params}, inputs)
-    return compute_metrics(logits, inputs, mask)
+    logits = TransformerLM(config).apply({'params': state.params}, inputs, labels=labels)
+    return compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
 
 
 def predict(params, prompt, config, eos_id):
@@ -532,24 +565,52 @@ def predict(params, prompt, config, eos_id):
         prompt = jnp.append(prompt, nxt_tok, axis=1)
 
         if nxt_tok.item() == eos_id:
-                break
+            break
 
     return prompt.flatten()
 
 
-@jax.jit
-def compute_metrics(logits, inputs, mask):
-    pred_logits = logits[...,:-1,:]
+def predict_with_lab(params, prompt, config, eos_id):
+    assert len(prompt.shape) == 1
+    labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 1, replace=False))
+    labels = np.append(labels, [0])
+    print('LABELS', labels)
+    prompt = prompt.reshape(1, -1)
+    labels = labels.reshape(1, -1)
+
+    m = TransformerLM(config)
+    for _ in tqdm(range(config.max_len - prompt.shape[1])):
+        logits = m.apply({'params': params}, prompt, labels=labels)
+        logits_tok = logits[...,:config.vocab_size]
+        logits_lab = logits[...,config.vocab_size:]
+
+        nxt_tok = jnp.argmax(logits_tok, -1)[0,-1].reshape(1, 1)
+        nxt_lab = jnp.argmax(logits_lab, -1)[0,-1].reshape(1, 1)
+        prompt = jnp.append(prompt, nxt_tok, axis=1)
+        labels = jnp.append(labels, nxt_lab, axis=1)
+
+        if nxt_tok.item() == eos_id:
+            break
+
+    return prompt.flatten(), labels.flatten()
+
+
+def compute_metrics(logits, inputs, mask, vocab_size=None):
+    if vocab_size == None:
+        vocab_size = logits.shape[-1]
+
+    pred_tok_logits = logits[...,:-1,:vocab_size]
+    # pred_lab_logits = logits[...,:-1,vocab_size:] # TODO: add metrics for labels
     pred_inputs = inputs[...,1:]
     pred_mask = mask[...,:-1]
 
-    loss = optax.softmax_cross_entropy_with_integer_labels(pred_logits, pred_inputs)
+    loss = optax.softmax_cross_entropy_with_integer_labels(pred_tok_logits, pred_inputs)
     loss = loss * pred_mask
     loss = loss.sum(axis=1).mean()
 
-    preds = jnp.argmax(pred_logits, axis=-1)
+    preds = jnp.argmax(pred_tok_logits, axis=-1)
     acc = jnp.sum((preds == pred_inputs) * pred_mask) / jnp.sum(pred_mask)
-    probs = jax.nn.softmax(pred_logits)[...,pred_inputs]
+    probs = jax.nn.softmax(pred_tok_logits)[...,pred_inputs]
     probs = jnp.diagonal(probs, axis1=1, axis2=3)
     probs = jnp.diagonal(probs, axis1=0, axis2=1).T
     conf = jnp.sum(probs * pred_mask) / jnp.sum(pred_mask)
@@ -561,12 +622,18 @@ def compute_metrics(logits, inputs, mask):
     }
 
 n_symbols = 2
-config = TransformerConfig(n_symbols + 3, deterministic=True)
-train_ds = CopyDataset(range(1, 20+1), vocab_size=n_symbols)
+max_item_label = 50
+
+config = TransformerConfig(n_symbols + 3, deterministic=True, use_label_embed=True, max_item_label=max_item_label)
+train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols, max_item_label=max_item_label)
+
+# config = TransformerConfig(n_symbols + 3, deterministic=True, use_label_embed=False)
+# train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols)
+
 train_dl = to_dataloader(train_ds, batch_size=32, num_workers=0, pin_memory=True)
 
 # <codecell>
-state, info = train(config, train_dl, eval_dl=train_dl, n_iters=10000, print_every=500)
+state, info = train(config, train_dl, eval_dl=train_dl, n_iters=10_000, print_every=1_000, save_dir='save/tmp')
 
 # <codecell>
 # TODO: make plots
@@ -589,26 +656,30 @@ for ax, metrics in zip(axs, [train, test]):
     # ax.plot(metrics['confidence'], label='confidence')
     # ax.plot(metrics['loss'], label='loss')
 
+# plt.savefig('fig/sinus_loss_curve.png')
+
 # <codecell>
-mngr = make_ckpt_manager('save/model')
+mngr = make_ckpt_manager('save/tmp')
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
-r = mngr.restore(best_step, items={'state': None, 'config': TransformerConfig(0)})
+r = mngr.restore(mngr.latest_step(), items={'state': None, 'config': TransformerConfig(0)})
 raw_state = r['state']
 
 # %%
 pred_config = config.replace(deterministic=True)
-inputs = [3,3,4,3,4,4,4,3,3,4,3,4,3,3,4,3,3,4,4,4,3,1]
-predict(raw_state['params'], jnp.array(inputs), pred_config, train_ds.tok_to_idx['END'])
+inputs = [3,3,4,3,3,4,3,3,4,4,3,3,4,4,3,4,1]
+predict_with_lab(raw_state['params'], jnp.array(inputs), pred_config, train_ds.tok_to_idx['END'])
 
 # %%
-def get_attn_weights(seq, params, config):
+def get_attn_weights(seq, params, config, labels=None):
     all_weights = []
+    if labels is not None:
+        labels = labels.reshape(1, -1)
 
     for i in range(config.num_layers):
         m = TransformerLM(config)
-        _, intm = m.apply({'params': params}, seq.reshape(1, -1), mutable='intermediates')
+        _, intm = m.apply({'params': params}, seq.reshape(1, -1), labels=labels, mutable='intermediates')
         attn_weights = intm['intermediates']['Decoder'][f'TransformerBlock_{i}']['SingleHeadSelfAttention_0']['attention_weights'][0]
         all_weights.append(attn_weights.squeeze())
 
@@ -638,15 +709,15 @@ def plot_attn_weights(attn_weights, seq, idx_to_tok):
         
 
 def plot_sequence(in_seq, state, config):
-    seq = predict(state, jnp.array(in_seq), pred_config, train_ds.tok_to_idx['END'])
+    seq, labs = predict_with_lab(state, jnp.array(in_seq), pred_config, train_ds.tok_to_idx['END'])
     # seq = jnp.array([3,3,4,3,4,1,3,3,4,3,4])
     print('SEQ', seq)
-    attn_weights = get_attn_weights(seq, state, config)
+    attn_weights = get_attn_weights(seq, state, config, labels=labs)
     plot_attn_weights(attn_weights, seq, train_ds.idx_to_tok)
 
 # plot_sequence([3,3,4,3,4,4,4,3,3,4,3,4,3,3,4,3,3,4,1], raw_state['params'], pred_config)
 plot_sequence(inputs, raw_state['params'], pred_config)
-plt.savefig('fig/sinus_21.png')
+# plt.savefig('fig/sinus_21.png')
 
 # <codecell>
 m = TransformerLM(pred_config)

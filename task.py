@@ -9,10 +9,13 @@ from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 
 start_char = 97    # ASCII 97 corresponds to 'a'
 
+
+# TODO: add randomized label-item embed here <-- STOPPED HERE
 class CopyDataset(IterableDataset):
-    def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False) -> None:
+    def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False, max_item_label=None) -> None:
         self.vocab_size = vocab_size
         self.weight_prop = weight_prop
+        self.max_item_label = max_item_label
 
         try:
             self.lengths = list(lengths)
@@ -54,21 +57,31 @@ class CopyDataset(IterableDataset):
             pattern_mask,      # predict output
             [0]                # ignored final prediction
         ))
-        return xs, pred_mask
+
+        if self.max_item_label is not None:
+            item_labels = np.sort(rng.choice(np.arange(1, self.max_item_label + 1), size=length, replace=False))
+            item_labels = np.concatenate((item_labels, [0], item_labels))  # reflect copy operation
+        else:
+            item_labels = np.zeros(length)
+
+        return xs, item_labels, pred_mask
 
 
 def pad_examples(exs, pad_tok):
-    xs, masks = zip(*exs)
+    xs, item_labels, masks = zip(*exs)
     max_len = np.max([len(x) for x in xs])
 
     xs_pad = np.ones((len(exs), max_len)) * pad_tok
+    labels_pad = np.zeros((len(exs), max_len))
     mask_pad = np.zeros((len(exs), max_len))
-    for i, (x, m) in enumerate(zip(xs, masks)):
+    for i, (x, l, m) in enumerate(zip(xs, item_labels, masks)):
         xs_pad[i,:len(x)] = x
+        labels_pad[i,:len(l)] = l
         mask_pad[i,:len(m)] = m
     
     return {
         'inputs': jnp.array(xs_pad).astype('int32'),
+        'labels': jnp.array(labels_pad).astype('int32'),
         'mask': jnp.array(mask_pad)
     }
 
@@ -80,6 +93,6 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    ds = CopyDataset([1,3], weight_prop=True)
+    ds = CopyDataset([1,3], weight_prop=True, max_item_label=None)
     dl = to_dataloader(ds, batch_size=8)
     print(next(iter(dl)))
