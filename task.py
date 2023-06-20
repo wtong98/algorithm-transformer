@@ -12,7 +12,7 @@ start_char = 97    # ASCII 97 corresponds to 'a'
 
 # TODO: add randomized label-item embed here <-- STOPPED HERE
 class CopyDataset(IterableDataset):
-    def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False, max_item_label=None) -> None:
+    def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False, max_item_label=-1) -> None:
         self.vocab_size = vocab_size
         self.weight_prop = weight_prop
         self.max_item_label = max_item_label
@@ -58,7 +58,7 @@ class CopyDataset(IterableDataset):
             [0]                # ignored final prediction
         ))
 
-        if self.max_item_label is not None:
+        if self.max_item_label > 0:
             item_labels = np.sort(rng.choice(np.arange(1, self.max_item_label + 1), size=length, replace=False))
             item_labels = np.concatenate((item_labels, [0], item_labels))  # reflect copy operation
         else:
@@ -93,6 +93,9 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    ds = CopyDataset([1,3], weight_prop=True, max_item_label=None)
+    ds = CopyDataset([1,3], weight_prop=True, max_item_label=-1)
     dl = to_dataloader(ds, batch_size=8)
-    print(next(iter(dl)))
+    ex = next(iter(ds))[0]
+    # ex = ex[:len(ex)//2]
+    print(type(ex))
+    # print(next(iter(ds)))

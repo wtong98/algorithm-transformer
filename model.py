@@ -63,7 +63,6 @@ class TransformerConfig:
     kernel_init: Callable = nn.initializers.xavier_uniform()
     bias_init: Callable = nn.initializers.normal(stddev=1e-6)
     posemb_init: Optional[Callable] = None
-    use_label_embed: bool = False
     max_item_label: int = -1
 
 
@@ -340,7 +339,7 @@ class Decoder(nn.Module):
 
         y = inputs.astype('int32')
         y = output_embed(y)
-        if config.use_label_embed:
+        if config.max_item_label > 0:
             y = AddLabelItemEmbs(config=config)(y, labels)
         else:
             y = AddPositionEmbs(
@@ -527,7 +526,7 @@ def train_step(state, batch, config, rng=None):
         loss = optax.softmax_cross_entropy_with_integer_labels(
             tok_logits[...,:-1,:], inputs[..., 1:])
         
-        if config.use_label_embed:
+        if config.max_item_label > 0:
             label_loss = optax.softmax_cross_entropy_with_integer_labels(
                 label_logits[...,:-1,:], labels[...,1:]
             )
@@ -553,12 +552,24 @@ def eval_step(state, batch, config):
     return compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
 
 
-def predict(params, prompt, config, eos_id):
+def predict(params, prompt, config, eos_id, use_tqdm=False):
+    if config.max_item_label > 0:
+        return predict_with_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
+    else:
+        return predict_no_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
+
+
+def predict_no_lab(params, prompt, config, eos_id, use_tqdm=False):
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
 
     m = TransformerLM(config)
-    for _ in tqdm(range(config.max_len - prompt.shape[1])):
+
+    it = range(config.max_len - prompt.shape[1])
+    if use_tqdm:
+        it = tqdm(it)
+
+    for _ in it:
         logits = m.apply({'params': params}, prompt)
         nxt_tok = jnp.argmax(logits, -1)[0,-1].reshape(1, 1)
         prompt = jnp.append(prompt, nxt_tok, axis=1)
@@ -566,19 +577,23 @@ def predict(params, prompt, config, eos_id):
         if nxt_tok.item() == eos_id:
             break
 
-    return prompt.flatten()
+    return prompt.flatten(), None
 
 
-def predict_with_lab(params, prompt, config, eos_id):
+def predict_with_lab(params, prompt, config, eos_id, use_tqdm=False):
     assert len(prompt.shape) == 1
     labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 1, replace=False))
     labels = np.append(labels, [0])
-    print('LABELS', labels)
     prompt = prompt.reshape(1, -1)
     labels = labels.reshape(1, -1)
 
     m = TransformerLM(config)
-    for _ in tqdm(range(config.max_len - prompt.shape[1])):
+
+    it = range(config.max_len - prompt.shape[1])
+    if use_tqdm:
+        it = tqdm(it)
+
+    for _ in it:
         logits = m.apply({'params': params}, prompt, labels=labels)
         logits_tok = logits[...,:config.vocab_size]
         logits_lab = logits[...,config.vocab_size:]
