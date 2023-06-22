@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 import pandas as pd
 import seaborn as sns
 
+import sys
+sys.path.append('../')
+
 from model import *
 from task import *
 
