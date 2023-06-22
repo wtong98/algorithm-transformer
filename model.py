@@ -26,8 +26,8 @@ import os.path
 import shutil
 from typing import Callable, Any, Optional
 
-from flax import linen as nn
-from flax import struct
+from flax import linen as nn, struct, traverse_util
+from flax.core.frozen_dict import freeze
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 
@@ -55,20 +55,36 @@ class TransformerConfig:
     num_layers: int = 2
     qkv_dim: int = 1024
     mlp_dim: int = 128
-    max_len: int = 128
+    max_len: int = 100
     dropout_rate: float = 0.
     attention_dropout_rate: float = 0.
     deterministic: bool = True
     decode: bool = False
     kernel_init: Callable = nn.initializers.xavier_uniform()
     bias_init: Callable = nn.initializers.normal(stddev=1e-6)
+    # kernel_init_name: str = 'xavier_uniform'
+    # kernel_init_params: dict = struct.field(default_factory=dict)
+    # bias_init_name: str = 'normal'
+    # bias_init_params: dict = struct.field(default_factory=lambda: {'stddev': 1e-6})
     posemb_init: Optional[Callable] = None
-    max_item_label: int = -1
+    posemb_scramble: bool = False
+    max_item_label: int = -1  # TODO: unify with max_len
+    freeze_embedding: bool = False
+    sinus_embedding: bool = False
+
+    # def kernel_init(self):
+    #     init_f = getattr(nn.initializers, self.kernel_init_name)
+    #     return init_f(**self.kernel_init_params)
+    
+    # def bias_init(self):
+    #     init_f = getattr(nn.initializers, self.bias_init_name)
+    #     return init_f(**self.bias_init_params)
 
 
 def sinusoidal_init(max_len=2048,
                     min_scale=1.0,
-                    max_scale=10000.0):
+                    max_scale=10000.0,
+                    squeeze=False):
     """1D Sinusoidal Position Embedding Initializer.
 
     Args:
@@ -90,7 +106,10 @@ def sinusoidal_init(max_len=2048,
         div_term = min_scale * np.exp(np.arange(0, d_feature // 2) * scale_factor)
         pe[:, :d_feature // 2] = np.sin(position * div_term)
         pe[:, d_feature // 2: 2 * (d_feature // 2)] = np.cos(position * div_term)
-        pe = pe[np.newaxis, :, :]  # [1, max_len, d_feature]
+
+        if not squeeze:
+            pe = pe[np.newaxis, :, :]  # [1, max_len, d_feature]
+
         return jnp.array(pe)
 
     return init
@@ -172,8 +191,15 @@ class AddPositionEmbs(nn.Module):
                                                                     None)
         else:
             pos_embedding = self.param('pos_embedding', config.posemb_init, pos_emb_shape)
-        pe = pos_embedding[:, :length, :]
-
+        
+        if config.posemb_scramble:
+            key = self.make_rng('position')
+            rand_idxs = jax.random.choice(key, config.max_len, shape=(length,), replace=False)
+            rand_idxs = jnp.sort(rand_idxs)
+            pe = pos_embedding[:, rand_idxs, :]
+        else:
+            pe = pos_embedding[:, :length, :]
+        
         # We use a cache position index for tracking decoding position.
         if self.decode:
             is_initialized = self.has_variable('cache', 'cache_index')
@@ -192,17 +218,23 @@ class AddPositionEmbs(nn.Module):
             # for packed data we need to use known position indices:
             return inputs + jnp.take(pe[0], inputs_positions, axis=0)
 
+
 class AddLabelItemEmbs(nn.Module):
 
     config: TransformerConfig
 
     @nn.compact
     def __call__(self, inputs, labels) -> Any:
-        
+
+        initzr = nn.initializers.normal(stddev=1.0)
+        if self.config.sinus_embedding:
+            initzr = sinusoidal_init(self.config.max_len + 1, squeeze=True)
+
         emb = nn.Embed(
             num_embeddings=self.config.max_item_label + 1,
             features=self.config.emb_dim,
-            embedding_init=nn.initializers.normal(stddev=1.0))(labels)
+            embedding_init=initzr
+        )(labels)
 
         return inputs + emb
 
@@ -251,8 +283,8 @@ class EncoderDecoder1DBlock(nn.Module):
 
     @nn.compact
     def __call__(self,
-                             inputs,
-                             decoder_mask=None):
+                inputs,
+                decoder_mask=None):
         """Applies EncoderDecoder1DBlock module.
 
         Args:
@@ -271,17 +303,6 @@ class EncoderDecoder1DBlock(nn.Module):
         x = inputs
         self.sow('intermediates', 'pre_attention', x)
         self.sow('intermediates', 'mask', decoder_mask)
-        # x = nn.SelfAttention(
-        #     num_heads=config.num_heads,
-        #     dtype=config.dtype,
-        #     qkv_features=config.qkv_dim,
-        #     kernel_init=config.kernel_init,
-        #     bias_init=config.bias_init,
-        #     use_bias=False,
-        #     broadcast_dropout=False,
-        #     dropout_rate=config.attention_dropout_rate,
-        #     deterministic=config.deterministic,
-        #     decode=config.decode)(x, decoder_mask)
         x = SingleHeadSelfAttention(config)(x, decoder_mask)
         x = nn.Dropout(rate=config.dropout_rate)(
             x, deterministic=config.deterministic)
@@ -439,7 +460,7 @@ def make_ckpt_manager(save_dir):
         
     )
 
-def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=51, print_every=1_000, save_dir='save/model'):
+def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=None, print_every=1_000, save_dir='save/model'):
     if os.path.exists(save_dir):
         shutil.rmtree(save_dir)
 
@@ -447,15 +468,31 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
     train_iter = iter(train_dl)
     mngr = make_ckpt_manager(save_dir)
 
+    if seed == None:
+        seed = int(np.random.random() * 1e5)
+
     rng = jax.random.PRNGKey(seed)
-    rng, init_rng = jax.random.split(rng)
+    rng, params_rng, dropout_rng, position_rng = jax.random.split(rng, num=4)
 
     input_shape = (train_dl.batch_size, config.max_len)
     model = TransformerLM(eval_config)
 
-    init_var = model.init(init_rng, jnp.ones(input_shape, jnp.float32), labels=jnp.ones(input_shape, jnp.int32))
+    init_var = jax.jit(model.init)({'dropout': dropout_rng, 'position': position_rng, 'params': params_rng}, jnp.ones(input_shape, jnp.float32), labels=jnp.ones(input_shape, jnp.int32))
 
-    optimizer = optax.adamw(lr)
+    opt = optax.adamw(lr)
+
+    if config.freeze_embedding:
+        partition = freeze(traverse_util.path_aware_map(
+            lambda path, _: 'frozen' if 'AddLabelItemEmbs_0' in path else 'trainable', init_var['params']
+        ))
+
+        print('FREEZING', partition)
+        optimizer = optax.multi_transform(
+            {'trainable': opt, 'frozen': optax.set_to_zero()}, partition
+        )
+    else:
+        optimizer = opt
+
     state = train_state.TrainState.create(
         apply_fn=model.apply,
         params=init_var['params'],
@@ -463,7 +500,7 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
     )
     del init_var
 
-    rng, dropout_rng = jax.random.split(rng)
+    rng, model_rng = jax.random.split(rng)
     train_metrics = []
     eval_metrics = []
 
@@ -471,21 +508,22 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
     c_train_step = jax.jit(
         functools.partial(train_step, config=config)
     )
-
+    
     c_eval_step = jax.jit(
         functools.partial(eval_step, config=eval_config)
     )
 
     for i in range(n_iters):
         batch = next(train_iter)
-        state, metrics = c_train_step(state, batch, rng=dropout_rng)
+        state, metrics = c_train_step(state, batch, rng=model_rng)
         train_metrics.append(metrics)
 
         if i % print_every == 0 or i == (n_iters-1):
             if eval_dl != None:
                 curr_eval_metrics = []
                 for _, batch in zip(range(eval_iters), eval_dl):
-                    metrics = c_eval_step(state, batch)
+                    rng, eval_rng = jax.random.split(rng)
+                    metrics = c_eval_step(state, batch, rng=eval_rng)
                     curr_eval_metrics.append(metrics)
                 curr_eval_metrics = stack_forest(curr_eval_metrics)
                 curr_eval_metrics = jax.tree_util.tree_map(jnp.mean, curr_eval_metrics)
@@ -511,15 +549,17 @@ def print_metric(step, m, is_eval=False):
 def train_step(state, batch, config, rng=None):
     train_keys = ['inputs', 'labels', 'mask']
     inputs, labels, mask = [batch.get(k, None) for k in train_keys]
+    # print('LABS', labels)
     
-    dropout_rng = jax.random.fold_in(rng, state.step)
+    rng = jax.random.fold_in(rng, state.step)
+    rng, dropout_rng, position_rng = jax.random.split(rng, num=3)
 
     def loss_fn(params):
         logits = TransformerLM(config).apply(
             {'params': params},
             inputs,
             labels=labels,
-            rngs={'dropout': dropout_rng}
+            rngs={'dropout': dropout_rng, 'position': position_rng}
         )
         
         tok_logits, label_logits = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
@@ -544,14 +584,15 @@ def train_step(state, batch, config, rng=None):
     return new_state, metrics
 
 
-def eval_step(state, batch, config):
+def eval_step(state, batch, config, rng=None):
     train_keys = ['inputs', 'labels', 'mask']
     inputs, labels, mask = [batch.get(k, None) for k in train_keys]
 
-    logits = TransformerLM(config).apply({'params': state.params}, inputs, labels=labels)
+    logits = TransformerLM(config).apply({'params': state.params}, inputs, labels=labels, rngs={'position': rng})
     return compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
 
 
+# TODO: consider jit'ing for accuracy evaluation
 def predict(params, prompt, config, eos_id, use_tqdm=False):
     if config.max_item_label > 0:
         return predict_with_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
@@ -559,9 +600,13 @@ def predict(params, prompt, config, eos_id, use_tqdm=False):
         return predict_no_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
 
 
-def predict_no_lab(params, prompt, config, eos_id, use_tqdm=False):
+def predict_no_lab(params, prompt, config, eos_id, use_tqdm=False, seed=43):
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
+
+    if seed == None:
+        seed = int(np.random.random() * 1e5)
+    key = jax.random.PRNGKey(seed)
 
     m = TransformerLM(config)
 
@@ -570,7 +615,7 @@ def predict_no_lab(params, prompt, config, eos_id, use_tqdm=False):
         it = tqdm(it)
 
     for _ in it:
-        logits = m.apply({'params': params}, prompt)
+        logits = m.apply({'params': params}, prompt, rngs={'position': key})
         nxt_tok = jnp.argmax(logits, -1)[0,-1].reshape(1, 1)
         prompt = jnp.append(prompt, nxt_tok, axis=1)
 
@@ -603,7 +648,7 @@ def predict_with_lab(params, prompt, config, eos_id, use_tqdm=False):
         prompt = jnp.append(prompt, nxt_tok, axis=1)
         labels = jnp.append(labels, nxt_lab, axis=1)
 
-        if nxt_tok.item() == eos_id:
+        if nxt_tok == eos_id:
             break
 
     return prompt.flatten(), labels.flatten()
@@ -634,3 +679,116 @@ def compute_metrics(logits, inputs, mask, labels=None, vocab_size=None,):
             'accuracy': acc,
             'confidence': conf
     }
+
+
+n_symbols = 2
+max_item_label = 50
+
+# config = TransformerConfig(
+#     n_symbols + 3, deterministic=True, max_item_label=max_item_label)
+# train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
+#                        max_item_label=max_item_label)
+
+config = TransformerConfig(
+    n_symbols + 3, deterministic=True, posemb_scramble=False)
+train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols)
+
+train_dl = to_dataloader(train_ds, batch_size=32,
+                         num_workers=0, pin_memory=True)
+
+# <codecell>
+state, info = train(config, train_dl, eval_dl=train_dl,
+                    n_iters=3_000, print_every=1_000, save_dir='save/tmp')
+
+# <codecell>
+train = stack_forest(info['train_metrics'])
+test = stack_forest(info['eval_metrics'])
+
+fig, axs = plt.subplots(2, 1, figsize=(8, 6))
+
+for ax, metrics in zip(axs, [train, test]):
+    ax.plot(metrics['accuracy'], color='C0', label='accuracy', alpha=0.8)
+    ax.set_ylabel('Accuracy', color='C0')
+    ax.tick_params(axis='y', labelcolor='C0')
+    # ax.set_xscale('log')
+
+    ax2 = ax.twinx()
+    ax2.plot(metrics['loss'], color='C1', label='loss', alpha=0.8)
+    ax2.set_ylabel('Loss', color='C1')
+    ax2.tick_params(axis='y', labelcolor='C1')
+
+    # ax.plot(metrics['confidence'], label='confidence')
+    # ax.plot(metrics['loss'], label='loss')
+
+# plt.savefig('fig/sinus_loss_curve.png')
+
+# <codecell>
+mngr = make_ckpt_manager('save/tmp')
+best_step = mngr.best_step()
+print('BEST ITER', best_step)
+
+r = mngr.restore(mngr.latest_step(), items={
+                 'state': None, 'config': TransformerConfig(0)})
+raw_state = r['state']
+
+# %%
+pred_config = config.replace(deterministic=True)
+
+inputs = [4] * 11 + [1]
+predict(raw_state['params'], jnp.array(
+    inputs), pred_config, train_ds.tok_to_idx['END'])
+
+# %%
+
+def get_attn_weights(seq, params, config, labels=None):
+    all_weights = []
+    if labels is not None:
+        labels = labels.reshape(1, -1)
+
+    for i in range(config.num_layers):
+        m = TransformerLM(config)
+        _, intm = m.apply({'params': params}, seq.reshape(
+            1, -1), labels=labels, mutable='intermediates')
+        attn_weights = intm['intermediates']['Decoder'][f'TransformerBlock_{i}'][
+            'SingleHeadSelfAttention_0']['attention_weights'][0]
+        all_weights.append(attn_weights.squeeze())
+
+    all_weights = jnp.stack(all_weights)
+    return all_weights
+
+
+def plot_attn_weights(attn_weights, seq, idx_to_tok):
+    n_layers = attn_weights.shape[0]
+    fig, axs = plt.subplots(1, n_layers, figsize=(7 * n_layers, 7))
+
+    if n_layers == 1:
+        axs = [axs]
+
+    for i, (attn, ax) in enumerate(zip(attn_weights, axs)):
+        ax.imshow(attn)
+        ax.set_xticks(np.arange(len(seq)))
+        ax.set_xticklabels([idx_to_tok[idx] for idx in seq])
+        ax.set_yticks(np.arange(len(seq)))
+        ax.set_yticklabels([idx_to_tok[idx] for idx in seq])
+
+        ax.set_xlabel('Token')
+        ax.set_ylabel('Time')
+        ax.set_title(f'Layer {i+1}')
+
+    fig.tight_layout()
+
+
+def plot_sequence(in_seq, params, config):
+    seq, labs = predict(params, jnp.array(
+        in_seq), config, train_ds.tok_to_idx['END'])
+    # seq = jnp.array([3,3,4,3,4,1,3,3,4,3,4])
+    print('SEQ', seq)
+    attn_weights = get_attn_weights(seq, params, config, labels=labs)
+    plot_attn_weights(attn_weights, seq, train_ds.idx_to_tok)
+
+
+# plot_sequence([3,3,4,3,4,4,4,3,3,4,3,4,3,3,4,3,3,4,1], raw_state['params'], pred_config)
+plot_sequence(inputs, raw_state['params'], pred_config)
+plt.savefig('fig/fix_sinus_attn_15.png')
+
+# %%
