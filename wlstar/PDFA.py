@@ -32,7 +32,7 @@ class PDFA: #deterministic probabilistic WFA that just has the states listed out
 		self.transitions[self.not_a_state]={a:self.not_a_state for a in self.internal_alphabet}
 		self.probabilities_list[self.not_a_state]=[default_probability for a in self.internal_alphabet]
 
-	def draw_nicely(self,max_size=60,precision=3,filename=None,keep=False,dpi=100,add_state_name=False): # probabilities_list, transition_weights, transitions
+	def draw_nicely(self,max_size=60,precision=3,filename=None,keep=False,dpi=100,add_state_name=False,transition_tol=1e-4): # probabilities_list, transition_weights, transitions
 		import graphviz as gv
 		import functools
 		from IPython.display import Image
@@ -62,7 +62,7 @@ class PDFA: #deterministic probabilistic WFA that just has the states listed out
 				else:
 					transition_labels[target] += ", " + label
 			for a in self.input_alphabet:
-				if self.transition_weights[s][a]<=0: # don't draw trash
+				if self.transition_weights[s][a]<=transition_tol: # don't draw trash
 					continue
 				add_transition_label(str(self.transitions[s][a]),transition_label(s,a))
 			for target in transition_labels:

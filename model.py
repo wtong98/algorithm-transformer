@@ -681,17 +681,18 @@ def compute_metrics(logits, inputs, mask, labels=None, vocab_size=None,):
     }
 
 
+'''
 n_symbols = 2
 max_item_label = 50
 
-# config = TransformerConfig(
-#     n_symbols + 3, deterministic=True, max_item_label=max_item_label)
-# train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
-#                        max_item_label=max_item_label)
-
 config = TransformerConfig(
-    n_symbols + 3, deterministic=True, posemb_scramble=False)
-train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols)
+    n_symbols + 3, deterministic=True, max_item_label=max_item_label)
+train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
+                       max_item_label=max_item_label)
+
+# config = TransformerConfig(
+#     n_symbols + 3, deterministic=True, posemb_scramble=False)
+# train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
@@ -792,3 +793,4 @@ plot_sequence(inputs, raw_state['params'], pred_config)
 plt.savefig('fig/fix_sinus_attn_15.png')
 
 # %%
+'''

@@ -22,7 +22,8 @@ def tup2seq(tup):
 class Table:
 	def __init__(self,target,max_P,max_S,atol,interval_width,prints_path,\
 		s_separating_threshold,expanding_time_limit,\
-		progress_P_print_rate,interesting_p_transition_threshold,very_verbose):
+		progress_P_print_rate,interesting_p_transition_threshold,very_verbose,
+		weight_keep_threshold):
 		self.prints_path = prints_path
 		self.P = [()]
 		self.S = [(t,) for t in target.internal_alphabet] # always add to end of S!
@@ -43,6 +44,7 @@ class Table:
 		self.progress_P_print_rate = progress_P_print_rate
 		self.skipped_P_count = 0
 		self.very_verbose = very_verbose
+		self.weight_keep_threshold = weight_keep_threshold
 
 	def compared_so_far(self,p1,p2):
 		return max(self.compared_log.get((p1,p2),0),self.compared_log.get((p2,p1),0))
@@ -129,7 +131,14 @@ class Table:
 	def last_token_weight(self,prefix):
 		if len(prefix)==0:
 			return 1
-		return self.prefix_weight(prefix)/self.prefix_weight(prefix[:-1]) # use own functions for prefix weight because they have memory
+		total_weight = self.prefix_weight(prefix)
+		denom_weight = self.prefix_weight(prefix[:-1]) # use own functions for prefix weight because they have memory
+
+		# if (total_weight / denom_weight) >= self.interesting_p_transition_threshold and '9' in prefix:
+		# 	print('DEMON PREFIX', prefix)
+		# 	print('WEIGHT', total_weight / denom_weight)
+		
+		return total_weight / denom_weight
 
 	def process(self,prefix): # fails if there was an inconsistency. 
 		if not prefix in self.P: # check worthiness for addition to P 
@@ -166,6 +175,11 @@ class Table:
 		if prefix in self.been_queued: # been_queued is empty for every new expansion
 			return # already got this one in thanks. will happen often once p has several entries, eg a aa aab, as children of some go into what P already has eg aa will try to add aab
 		prefix_weight = self.prefix_weight(prefix)
+
+		if prefix_weight <= self.weight_keep_threshold:
+			self.skipped_P_count += 1
+			return # ignore negligible prefixes altogether
+
 		heappush(self.prefix_queue,(-prefix_weight,prefix))
 		self.been_queued.add(prefix)
 
@@ -526,12 +540,12 @@ def learn(target,max_P=np.inf,max_S=np.inf,max_states=np.inf,\
 	pdfas_path=None,prints_path=None,atol=0.1,interval_width=0.2,\
 	n_cex_attempts=1000,max_counterexample_length=1000,max_size=-1,\
 	s_separating_threshold=-1,expanding_time_limit=np.inf,\
-	progress_P_print_rate=1e4,interesting_p_transition_threshold=-1,very_verbose=False):
+	progress_P_print_rate=1e4,interesting_p_transition_threshold=-1,very_verbose=False,weight_keep_threshold=-1):
 	prints_path = sys.stdout if None is prints_path else prints_path
 	start = process_time()
 	target = LanguageModel(target)
 	table = Table(target,max_P,max_S,atol,interval_width,prints_path,s_separating_threshold,\
-		expanding_time_limit,progress_P_print_rate,interesting_p_transition_threshold,very_verbose)
+		expanding_time_limit,progress_P_print_rate,interesting_p_transition_threshold,very_verbose,weight_keep_threshold)
 	cex_generator = CounterexampleGenerator(target,atol,n_cex_attempts,max_counterexample_length,prints_path)
 	table.counterexamples = []
 	table.extracted_sizes = []

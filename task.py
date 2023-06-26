@@ -27,7 +27,7 @@ class CopyDataset(IterableDataset):
             weights = np.array(self.lengths)
             self.probs = weights / np.sum(weights)
 
-        self.vocab_toks = [chr(97 + i) for i in range(vocab_size)]
+        self.vocab_toks = [chr(start_char + i) for i in range(vocab_size)]
         self.idx_to_tok = [
             'PAD',
             'GO',
