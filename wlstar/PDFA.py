@@ -41,6 +41,7 @@ class PDFA: #deterministic probabilistic WFA that just has the states listed out
 		g.attr(dpi=str(dpi))
 		states = list(self.check_reachable_states())
 		if len(states)>max_size:
+			print(f'warn: n_states={len(states)} exceeds max states ({max_size})')
 			return
 		def state_label(s):
 			w = self.transition_weights[s][self.end_token]

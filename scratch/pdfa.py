@@ -87,11 +87,12 @@ class DummyAuto:
 
 
 class CopyTransformerAuto:
-    def __init__(self, params, config, tok_to_idx, max_length=2, seed=None) -> None:
+    def __init__(self, params, config, tok_to_idx, max_length=2, seed=None, squelch_prob=0) -> None:
         self.params = params
         self.config = config
         self.tok_to_idx = tok_to_idx
         self.max_length = max_length
+        self.squelch_prob = squelch_prob
 
         if seed == None:
             seed = int(np.random.random() * 1e5)
@@ -139,8 +140,11 @@ class CopyTransformerAuto:
             return self.terminus_probs
 
         probs = self.c_get_probs(prompt, labels).tolist()
-        probs = len(self.all_combos) * [0] + probs
-        return probs
+        probs = np.array(len(self.all_combos) * [0] + probs)
+
+        probs = np.where(probs < self.squelch_prob, 0, probs)
+        probs = probs / np.sum(probs)
+        return probs.tolist()
 
     def state_char_prob(self, state, token):
         idx = self.internal_alphabet.index(token)
@@ -174,17 +178,18 @@ class CopyTransformerAuto:
 
 n_symbols = 2
 max_item_label = 10
+max_length = 2
 
 config = TransformerConfig(n_symbols + 3, max_item_label=max_item_label)
-train_ds = CopyDataset(range(1, 3+1), vocab_size=n_symbols, max_item_label=max_item_label)
+train_ds = CopyDataset(range(1, max_length+1), vocab_size=n_symbols, max_item_label=max_item_label)
 train_dl = to_dataloader(train_ds, batch_size=32, num_workers=0, pin_memory=True)
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=3_000, print_every=1_000, save_dir='save/tmp')
+                    n_iters=3_000, print_every=1_000, save_dir='save/len_2')
 
 # <codecell>
-mngr = make_ckpt_manager('save/tmp')
+mngr = make_ckpt_manager('save/len_2')
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
@@ -193,7 +198,7 @@ r = mngr.restore(best_step, items={
 params = r['state']['params']
 
 # <codecell>
-a = CopyTransformerAuto(params, config, train_ds.tok_to_idx, max_length=2)
+a = CopyTransformerAuto(params, config, train_ds.tok_to_idx, max_length=3, squelch_prob=1e-3)
 # probs = a.state_probs_dist(('s','ab', 'a|1'))
 # idx = np.argmax(probs)
 # a.internal_alphabet[idx]
@@ -209,17 +214,16 @@ a = CopyTransformerAuto(params, config, train_ds.tok_to_idx, max_length=2)
 
 # print(state)
 
-
-p, table, _ = learn(a, 
+p, table, m = learn(a, 
                 pdfas_path='save/pdfa_test', 
-                interesting_p_transition_threshold=1e-4,
-                s_separating_threshold=-1,
-                weight_keep_threshold=1e-4)
+                interesting_p_transition_threshold=-1,
+                s_separating_threshold=0.05,
+                weight_keep_threshold=1e-3,
+                atol=0.1,
+                max_size=-1)
 
 # <codecell>
-p.draw_nicely(keep=True, filename='tmp', transition_tol=1e-3)
-
-# <codecell>
+p.draw_nicely(keep=True, filename='tmp', transition_tol=0, max_size=140)
 
 
 

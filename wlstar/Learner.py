@@ -1,3 +1,4 @@
+from typing import Tuple
 import numpy as np
 from Helper_Functions import OhHeck, clean_val, inverse_dict,  do_timed, overwrite_file
 from PDFA import PDFA
@@ -81,6 +82,12 @@ class Table:
 				continue
 			for v1,v2,s in zip(r1,r2,suffixes):
 				if not self.equal(np.array([v1]),np.array([v2])):
+					# NOTE: should consider this issue more carefully v
+					# main_prob_check = self.prefix_then_suffix_prob(p_main, (t,))
+					# p_close_check = self.prefix_then_suffix_prob(p_close, (t,))
+					# if main_prob_check < self.s_separating_threshold or p_close_check < self.s_separating_threshold:
+					# 	continue   # skip check if t not worth looking at
+
 					main_prob = self.prefix_then_suffix_prob(p_main,(t,)+s)
 					p_close_prob = self.prefix_then_suffix_prob(p_close,(t,)+s)
 					min_prob = min(main_prob,p_close_prob) # i.e. (t,)+s differentiate prefixes p1 and p2, and happens with probability at least min_prob after each one 
@@ -116,6 +123,9 @@ class Table:
 			if not None is new_suffix:
 				assert not new_suffix in self.S # else wtf	
 				if new_suffix_relevance > self.s_separating_threshold: 
+					print('NEW SUFFIX', new_suffix)
+					print('NEW SUFFIX REL', new_suffix_relevance)
+
 					self.S.append(new_suffix)
 					print("added separating suffix:",tup2seq(new_suffix),file=self.prints_path)
 					print("time since last suffix add:",process_time()-self.last_suffix_add_time,file=self.prints_path)
@@ -231,7 +241,7 @@ class Table:
 
 
 class Relations:
-	def __init__(self,table):
+	def __init__(self,table: Table):
 		self.table = table
 		self.p2int = {p:i for i,p in enumerate(table.P)}
 		n = len(table.P)
@@ -264,8 +274,6 @@ class Relations:
 
 	def is_clique(self,prefs):
 		return None is self.find_not_matching(prefs)
-
-
 
 
 class Minimiser:
@@ -540,7 +548,7 @@ def learn(target,max_P=np.inf,max_S=np.inf,max_states=np.inf,\
 	pdfas_path=None,prints_path=None,atol=0.1,interval_width=0.2,\
 	n_cex_attempts=1000,max_counterexample_length=1000,max_size=-1,\
 	s_separating_threshold=-1,expanding_time_limit=np.inf,\
-	progress_P_print_rate=1e4,interesting_p_transition_threshold=-1,very_verbose=False,weight_keep_threshold=-1):
+	progress_P_print_rate=1e4,interesting_p_transition_threshold=-1,very_verbose=False,weight_keep_threshold=-1) -> Tuple[PDFA, Table, Minimiser]:
 	prints_path = sys.stdout if None is prints_path else prints_path
 	start = process_time()
 	target = LanguageModel(target)
