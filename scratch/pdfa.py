@@ -5,6 +5,7 @@ author: William Tong (wtong@g.harvard.edu)
 """
 
 # <codecell>
+from collections.abc import Iterable
 import functools
 import itertools
 
@@ -87,17 +88,20 @@ class DummyAuto:
 
 
 class CopyTransformerAuto:
-    def __init__(self, params, config, tok_to_idx, max_length=2, seed=None, squelch_prob=0) -> None:
+    def __init__(self, params: dict, config: TransformerConfig, 
+                       tok_to_idx: dict, 
+                       lengths: Iterable[int] = None, 
+                       n_samples_per_len=-1, squelch_prob=1e-2) -> None:
         self.params = params
         self.config = config
         self.tok_to_idx = tok_to_idx
-        self.max_length = max_length
-        self.squelch_prob = squelch_prob
+        self.lengths = lengths
 
-        if seed == None:
-            seed = int(np.random.random() * 1e5)
-        
-        self.rng = jax.random.PRNGKey(seed)
+        if self.lengths == None:
+            self.lengths = [2]
+
+        self.n_samples_per_len = n_samples_per_len
+        self.squelch_prob = squelch_prob
 
         self.model = TransformerLM(self.config)
         self.n_symbols = len(tok_to_idx) - 3
@@ -107,15 +111,25 @@ class CopyTransformerAuto:
         self.symbols = [f'{s[0]}|{str(s[1])}' for s in symbols]
 
         self.all_combos = []
-        for i in range(1, self.max_length + 1):
-            combo = itertools.product(self.alpha_symbols, repeat=i)
+        for i in lengths:
+            if n_samples_per_len > 0:
+                combo = set()
+                max_size = len(self.alpha_symbols) ** i
+                while len(combo) < n_samples_per_len and len(combo) < max_size:
+                    ex = np.random.choice(self.alpha_symbols, replace=True, size=i)
+                    ex = ''.join(ex)
+                    combo.add(ex)
+            else:
+                combo = itertools.product(self.alpha_symbols, repeat=i)
+                combo = [''.join(ex) for ex in combo]
+
             self.all_combos.extend(combo)
         
         # alphabetical symbols represent true inputs. Numbers represent starting positions
-        self.input_alphabet = [''.join(c) for c in self.all_combos] + self.symbols
+        self.input_alphabet = self.all_combos + self.symbols
         self.end_token = 'END'
         self.internal_alphabet = self.input_alphabet + [self.end_token]
-        self.terminus_probs = (len(self.internal_alphabet) - 1) * [0] + [1]
+        self.terminus_probs = len(self.input_alphabet) * [0] + [1]
 
         self.c_get_probs = jax.jit(functools.partial(
             get_probs, params=self.params, config=self.config
@@ -178,7 +192,7 @@ class CopyTransformerAuto:
 
 n_symbols = 2
 max_item_label = 10
-max_length = 2
+max_length = 3
 
 config = TransformerConfig(n_symbols + 3, max_item_label=max_item_label)
 train_ds = CopyDataset(range(1, max_length+1), vocab_size=n_symbols, max_item_label=max_item_label)
@@ -189,7 +203,7 @@ state, info = train(config, train_dl, eval_dl=train_dl,
                     n_iters=3_000, print_every=1_000, save_dir='save/len_2')
 
 # <codecell>
-mngr = make_ckpt_manager('save/len_2')
+mngr = make_ckpt_manager('save/len_3')
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
@@ -198,7 +212,7 @@ r = mngr.restore(best_step, items={
 params = r['state']['params']
 
 # <codecell>
-a = CopyTransformerAuto(params, config, train_ds.tok_to_idx, max_length=3, squelch_prob=1e-3)
+a = CopyTransformerAuto(params, config, train_ds.tok_to_idx, lengths=[5,6,7], n_samples_per_len=5)
 # probs = a.state_probs_dist(('s','ab', 'a|1'))
 # idx = np.argmax(probs)
 # a.internal_alphabet[idx]
@@ -222,9 +236,11 @@ p, table, m = learn(a,
                 atol=0.1,
                 max_size=-1)
 
-# <codecell>
-p.draw_nicely(keep=True, filename='tmp', transition_tol=0, max_size=140)
+p.draw_nicely(keep=True, filename='fig/pdfa_sample/tmp', transition_tol=0, max_size=140)
 
+# TODO/NOTE: transitions back to start represent oops transitions unforseen
+# during expansion (per slopiness in original code). Should be fixed by more
+# clever counterexample search
 
 
 # <codecell>
