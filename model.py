@@ -27,8 +27,8 @@ import shutil
 from typing import Callable, Any, Optional
 
 from flax import linen as nn, struct, traverse_util
-from flax.core.frozen_dict import freeze
-from flax.training import train_state
+from flax.core.frozen_dict import freeze, FrozenDict
+from flax.training import train_state, orbax_utils
 from flax.training.common_utils import stack_forest
 
 import jax
@@ -60,25 +60,23 @@ class TransformerConfig:
     attention_dropout_rate: float = 0.
     deterministic: bool = True
     decode: bool = False
-    kernel_init: Callable = nn.initializers.xavier_uniform()
-    bias_init: Callable = nn.initializers.normal(stddev=1e-6)
-    # kernel_init_name: str = 'xavier_uniform'
-    # kernel_init_params: dict = struct.field(default_factory=dict)
-    # bias_init_name: str = 'normal'
-    # bias_init_params: dict = struct.field(default_factory=lambda: {'stddev': 1e-6})
+    kernel_init_name = 'xavier_uniform'
+    kernel_init_params: FrozenDict = struct.field(default_factory=FrozenDict)
+    bias_init_name = 'normal'
+    bias_init_params: FrozenDict = struct.field(default_factory=lambda: FrozenDict({'stddev': 1e-6}))
     posemb_init: Optional[Callable] = None
     posemb_scramble: bool = False
     max_item_label: int = -1  # TODO: unify with max_len
     freeze_embedding: bool = False
     sinus_embedding: bool = False
 
-    # def kernel_init(self):
-    #     init_f = getattr(nn.initializers, self.kernel_init_name)
-    #     return init_f(**self.kernel_init_params)
+    def kernel_init(self):
+        init_f = getattr(nn.initializers, self.kernel_init_name)
+        return init_f(**self.kernel_init_params)
     
-    # def bias_init(self):
-    #     init_f = getattr(nn.initializers, self.bias_init_name)
-    #     return init_f(**self.bias_init_params)
+    def bias_init(self):
+        init_f = getattr(nn.initializers, self.bias_init_name)
+        return init_f(**self.bias_init_params)
 
 
 def sinusoidal_init(max_len=2048,
@@ -131,8 +129,8 @@ class SingleHeadSelfAttention(nn.Module):
             features=self.config.qkv_dim,
             dtype=self.config.dtype,
             param_dtype=self.config.dtype,
-            kernel_init=self.config.kernel_init,
-            bias_init=self.config.bias_init)
+            kernel_init=self.config.kernel_init(),
+            bias_init=self.config.bias_init())
         
         query = dense(name='query')(inputs)
         key = dense(name='key')(inputs)
@@ -258,16 +256,16 @@ class MlpBlock(nn.Module):
         x = nn.Dense(
             config.mlp_dim,
             dtype=config.dtype,
-            kernel_init=config.kernel_init,
-            bias_init=config.bias_init)(inputs)
+            kernel_init=config.kernel_init(),
+            bias_init=config.bias_init())(inputs)
         x = nn.relu(x)
         x = nn.Dropout(rate=config.dropout_rate)(
             x, deterministic=config.deterministic)
         output = nn.Dense(
             actual_out_dim,
             dtype=config.dtype,
-            kernel_init=config.kernel_init,
-            bias_init=config.bias_init)(x)
+            kernel_init=config.kernel_init(),
+            bias_init=config.bias_init())(x)
         output = nn.Dropout(rate=config.dropout_rate)(
             output, deterministic=config.deterministic)
         return output
@@ -389,8 +387,8 @@ class Decoder(nn.Module):
             logits = nn.Dense(
                 config.vocab_size + config.max_item_label + 1,
                 dtype=config.dtype,
-                kernel_init=config.kernel_init,
-                bias_init=config.bias_init,
+                kernel_init=config.kernel_init(),
+                bias_init=config.bias_init(),
                 name='LogitDense')(y)
         return logits
 
@@ -452,7 +450,8 @@ class TransformerLM(nn.Module):
 def make_ckpt_manager(save_dir):
     return CheckpointManager(
         save_dir, 
-        {'state': PyTreeCheckpointer(), 'config': PyTreeCheckpointer()}, 
+        PyTreeCheckpointer(),
+        # {'state': PyTreeCheckpointer(), 'config': PyTreeCheckpointer()}, 
         options=CheckpointManagerOptions(
                 keep_period=1,
                 best_fn=lambda x: x,
@@ -529,7 +528,11 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
                 curr_eval_metrics = jax.tree_util.tree_map(jnp.mean, curr_eval_metrics)
                 eval_metrics.append(curr_eval_metrics)
                 print_metric(i, curr_eval_metrics, is_eval=True)
-                mngr.save(i, {'state': state, 'config': config}, metrics=curr_eval_metrics['loss'].item())
+
+                ckpt = {'state': state, 'config': config}
+                
+                save_args = orbax_utils.save_args_from_target(ckpt)
+                mngr.save(i, ckpt, metrics=curr_eval_metrics['loss'].item(), save_kwargs={'save_args': save_args})
             else:
                 print_metric(i, train_metrics[-1])
     
@@ -540,10 +543,11 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
     }
 
 def print_metric(step, m, is_eval=False):
+    prefix = 'TRAIN'
     if is_eval:
-        print(f'EVAL step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
-    else:
-        print(f'TRAIN step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
+        prefix = 'EVAL'
+
+    print(f'{prefix} step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  aon: {m["aon_accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
 
 
 def train_step(state, batch, config, rng=None):
@@ -592,7 +596,6 @@ def eval_step(state, batch, config, rng=None):
     return compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
 
 
-# TODO: consider jit'ing for accuracy evaluation
 def predict(params, prompt, config, eos_id, use_tqdm=False):
     if config.max_item_label > 0:
         return predict_with_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
@@ -600,61 +603,36 @@ def predict(params, prompt, config, eos_id, use_tqdm=False):
         return predict_no_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
 
 
-def predict_no_lab(params, prompt, config, eos_id, use_tqdm=False, seed=43):
+# TODO: test
+def predict_no_lab(params, prompt, config, use_tqdm=False):
+    prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
-
-    if seed == None:
-        seed = int(np.random.random() * 1e5)
-    key = jax.random.PRNGKey(seed)
-
-    m = TransformerLM(config)
 
     it = range(config.max_len - prompt.shape[1])
     if use_tqdm:
         it = tqdm(it)
 
     for _ in it:
-        logits = m.apply({'params': params}, prompt, rngs={'position': key})
-        nxt_tok = jnp.argmax(logits, -1)[0,-1].reshape(1, 1)
-        prompt = jnp.append(prompt, nxt_tok, axis=1)
+        prompt = get_next(prompt, params, config)
 
-        if nxt_tok.item() == eos_id:
+        if prompt[0,-1] == 2: # END == 2
             break
 
     return prompt.flatten(), None
 
 
-def predict_with_lab(params, prompt, config, eos_id, use_tqdm=False):
-    assert len(prompt.shape) == 1
-    labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 1, replace=False))
-    labels = np.append(labels, [0])
-    prompt = prompt.reshape(1, -1)
-    labels = labels.reshape(1, -1)
-
+@functools.partial(jax.jit, static_argnames='config')
+def get_next(prompt, params, config):
     m = TransformerLM(config)
+    logits = m.apply({'params': params}, prompt)
+    nxt_tok = jnp.argmax(logits, -1)[0,-1].reshape(1, 1)
 
-    it = range(config.max_len - prompt.shape[1])
-    if use_tqdm:
-        it = tqdm(it)
-
-    for _ in it:
-        logits = m.apply({'params': params}, prompt, labels=labels)
-        logits_tok = logits[...,:config.vocab_size]
-        logits_lab = logits[...,config.vocab_size:]
-
-        nxt_tok = jnp.argmax(logits_tok, -1)[0,-1].reshape(1, 1)
-        nxt_lab = jnp.argmax(logits_lab, -1)[0,-1].reshape(1, 1)
-        prompt = jnp.append(prompt, nxt_tok, axis=1)
-        labels = jnp.append(labels, nxt_lab, axis=1)
-
-        if nxt_tok == eos_id:
-            break
-
-    return prompt.flatten(), labels.flatten()
+    prompt = jnp.append(prompt, nxt_tok, axis=1)
+    return prompt
 
 
-def predict_c(c_next, prompt: list, config: TransformerConfig, use_tqdm=False):
+def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, use_tqdm=False):
     prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
     labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 1, replace=False))
@@ -668,7 +646,7 @@ def predict_c(c_next, prompt: list, config: TransformerConfig, use_tqdm=False):
         it = tqdm(it)
 
     for _ in it:
-        prompt, labels = c_next(prompt, labels)
+        prompt, labels = get_next_with_lab(prompt, labels, params, config)
 
         if prompt[0,-1] == 2: # END == 2
             break
@@ -676,8 +654,8 @@ def predict_c(c_next, prompt: list, config: TransformerConfig, use_tqdm=False):
     return prompt
 
 
-# NOTE: jit'able
-def get_next_out(prompt, labels, params, config):
+@functools.partial(jax.jit, static_argnames='config')
+def get_next_with_lab(prompt, labels, params, config):
     m = TransformerLM(config)
     logits = m.apply({'params': params}, prompt, labels=labels)
     logits_tok, logits_lab = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
@@ -688,7 +666,6 @@ def get_next_out(prompt, labels, params, config):
     prompt = jnp.append(prompt, nxt_tok, axis=1)
     labels = jnp.append(labels, nxt_lab, axis=1)
     return prompt, labels
-    
 
 
 def compute_metrics(logits, inputs, mask, labels=None, vocab_size=None,):
@@ -706,6 +683,10 @@ def compute_metrics(logits, inputs, mask, labels=None, vocab_size=None,):
 
     preds = jnp.argmax(pred_tok_logits, axis=-1)
     acc = jnp.sum((preds == pred_inputs) * pred_mask) / jnp.sum(pred_mask)
+
+    aon_acc = jnp.sum((preds == pred_inputs) * pred_mask, axis=1) / jnp.sum(pred_mask, axis=1)
+    aon_acc = jnp.mean(jnp.isclose(aon_acc, 1))
+
     probs = jax.nn.softmax(pred_tok_logits)[...,pred_inputs]
     probs = jnp.diagonal(probs, axis1=1, axis2=3)
     probs = jnp.diagonal(probs, axis1=0, axis2=1).T
@@ -714,10 +695,10 @@ def compute_metrics(logits, inputs, mask, labels=None, vocab_size=None,):
     return {
             'loss': loss,
             'accuracy': acc,
+            'aon_accuracy': aon_acc,
             'confidence': conf
     }
 
-'''
 n_symbols = 2
 max_item_label = 50
 
@@ -735,7 +716,7 @@ train_dl = to_dataloader(train_ds, batch_size=32,
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=3_000, print_every=1_000, save_dir='scratch/save/item_label')
+                    n_iters=1_000, print_every=100, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
@@ -747,7 +728,9 @@ for ax, metrics in zip(axs, [train, test]):
     ax.plot(metrics['accuracy'], color='C0', label='accuracy', alpha=0.8)
     ax.set_ylabel('Accuracy', color='C0')
     ax.tick_params(axis='y', labelcolor='C0')
-    # ax.set_xscale('log')
+
+    ax.plot(metrics['aon_accuracy'], color='C0', label='aon_accuracy', alpha=0.6, linestyle='dashed')
+    ax.set_xscale('log')
 
     ax2 = ax.twinx()
     ax2.plot(metrics['loss'], color='C1', label='loss', alpha=0.8)
@@ -757,27 +740,26 @@ for ax, metrics in zip(axs, [train, test]):
     # ax.plot(metrics['confidence'], label='confidence')
     # ax.plot(metrics['loss'], label='loss')
 
-# plt.savefig('fig/sinus_loss_curve.png')
+plt.savefig('scratch/fig/item_label_loss_curve.png')
 
 # <codecell>
-mngr = make_ckpt_manager('scratch/save/item_label')
+mngr = make_ckpt_manager('scratch/save/tmp')
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
-r = mngr.restore(mngr.latest_step(), items={
-                 'state': None, 'config': TransformerConfig(0)})
+r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
 pred_config = config.replace(deterministic=True)
 
-c_next = jax.jit(
-    functools.partial(
-        _get_next_out, params=raw_state['params'], config=pred_config
-    ))
+# c_next = jax.jit(
+#     functools.partial(
+#         get_next_out, params=raw_state['params'], config=pred_config
+#     ))
 
 inputs = [4] * 11 + [1]
-predict_c(c_next, inputs, pred_config)
+predict_c(inputs, raw_state['params'], pred_config)
 
 # predict(raw_state['params'], jnp.array(
 #     inputs), pred_config, train_ds.tok_to_idx['END'])

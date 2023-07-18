@@ -153,7 +153,7 @@ df = pd.concat(all_df)
 
 # <codecell>
 plt.gcf().set_size_inches(18, 2)
-sns.boxplot(df, x='len', y='acc', hue='name')
+sns.barplot(df, x='len', y='acc', hue='name')
 plt.savefig('fig/generalization_acc_len.png')
 
 
