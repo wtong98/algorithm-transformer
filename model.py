@@ -47,8 +47,6 @@ from task import *
 class TransformerConfig:
     """Global hyperparameters used to minimize obnoxious kwarg plumbing."""
     vocab_size: int
-    share_embeddings: bool = False
-    logits_via_embedding: bool = False
     dtype: Any = jnp.float32
     emb_dim: int = 1024
     num_heads: int = 1
@@ -160,9 +158,7 @@ class AddPositionEmbs(nn.Module):
     decode: bool = False
 
     @nn.compact
-    def __call__(self,
-                inputs,
-                inputs_positions=None):
+    def __call__(self, inputs):
         """Applies AddPositionEmbs module.
 
         By default this layer uses a fixed sinusoidal embedding table. If a
@@ -171,7 +167,6 @@ class AddPositionEmbs(nn.Module):
 
         Args:
             inputs: input data.
-            inputs_positions: input position indices for packed sequences.
 
         Returns:
             output: `(bs, timesteps, in_dim)`
@@ -209,12 +204,7 @@ class AddPositionEmbs(nn.Module):
                 pe = lax.dynamic_slice(pos_embedding,
                                         jnp.array((0, i, 0)),
                                         (1, 1, df))
-        if inputs_positions is None:
-            # normal unpacked case:
-            return inputs + pe
-        else:
-            # for packed data we need to use known position indices:
-            return inputs + jnp.take(pe[0], inputs_positions, axis=0)
+        return inputs + pe
 
 
 class AddLabelItemEmbs(nn.Module):
@@ -235,40 +225,6 @@ class AddLabelItemEmbs(nn.Module):
         )(labels)
 
         return inputs + emb
-
-
-class MlpBlock(nn.Module):
-    """Transformer MLP / feed-forward block.
-
-    Args:
-        config: TransformerConfig dataclass containing hyperparameters.
-        out_dim: optionally specify out dimension.
-    """
-    config: TransformerConfig
-    out_dim: Optional[int] = None
-
-    @nn.compact
-    def __call__(self, inputs):
-        """Applies Transformer MlpBlock module."""
-        config = self.config
-        actual_out_dim = (inputs.shape[-1] if self.out_dim is None
-                                            else self.out_dim)
-        x = nn.Dense(
-            config.mlp_dim,
-            dtype=config.dtype,
-            kernel_init=config.kernel_init(),
-            bias_init=config.bias_init())(inputs)
-        x = nn.relu(x)
-        x = nn.Dropout(rate=config.dropout_rate)(
-            x, deterministic=config.deterministic)
-        output = nn.Dense(
-            actual_out_dim,
-            dtype=config.dtype,
-            kernel_init=config.kernel_init(),
-            bias_init=config.bias_init())(x)
-        output = nn.Dropout(rate=config.dropout_rate)(
-            output, deterministic=config.deterministic)
-        return output
 
 
 class EncoderDecoder1DBlock(nn.Module):
@@ -297,7 +253,6 @@ class EncoderDecoder1DBlock(nn.Module):
 
         # Decoder block.
         assert inputs.ndim == 3
-        # x = nn.LayerNorm(dtype=config.dtype)(inputs)
         x = inputs
         self.sow('intermediates', 'pre_attention', x)
         self.sow('intermediates', 'mask', decoder_mask)
@@ -306,11 +261,6 @@ class EncoderDecoder1DBlock(nn.Module):
             x, deterministic=config.deterministic)
         x = x + inputs
 
-        # MLP block.
-        # z = nn.LayerNorm(dtype=config.dtype)(x)
-        # z = MlpBlock(config=config)(z)
-
-        # return x + z
         return x
 
 
@@ -328,18 +278,13 @@ class Decoder(nn.Module):
     def __call__(self,
                 inputs,
                 labels=None,
-                inputs_positions=None,
-                inputs_segmentation=None,
                 decoder_mask=None):
         """Applies Transformer model on the inputs.
 
         Args:
             encoded: encoded input data from encoder.
             inputs: input data.
-            inputs_positions: input subsequence positions for packed examples.
-            inputs_segmentation: input segmentation info for packed examples.
             decoder_mask: decoder self-attention mask.
-            encoder_decoder_mask: encoder-decoder attention mask.
 
         Returns:
             output of a transformer decoder.
@@ -362,8 +307,7 @@ class Decoder(nn.Module):
             y = AddLabelItemEmbs(config=config)(y, labels)
         else:
             y = AddPositionEmbs(
-                config=config, decode=config.decode, name='PositionEmb')(
-                        y, inputs_positions=inputs_positions)
+                config=config, decode=config.decode, name='PositionEmb')(y)
         y = nn.Dropout(rate=config.dropout_rate)(
             y, deterministic=config.deterministic)
             
@@ -375,21 +319,13 @@ class Decoder(nn.Module):
                 config=config, name=f'TransformerBlock_{lyr}')(
                         y,
                         decoder_mask=decoder_mask)
-        # y = nn.LayerNorm(dtype=config.dtype, name='FinalNorm')(y)
 
-        # Decoded Logits
-        if config.logits_via_embedding:
-            # Use the transpose of embedding matrix for logit transform.
-            logits = output_embed.attend(y.astype(jnp.float32))
-            # Correctly normalize pre-softmax logits for this shared case.
-            logits = logits / jnp.sqrt(y.shape[-1])
-        else:
-            logits = nn.Dense(
-                config.vocab_size + config.max_item_label + 1,
-                dtype=config.dtype,
-                kernel_init=config.kernel_init(),
-                bias_init=config.bias_init(),
-                name='LogitDense')(y)
+        logits = nn.Dense(
+            config.vocab_size + config.max_item_label + 1,
+            dtype=config.dtype,
+            kernel_init=config.kernel_init(),
+            bias_init=config.bias_init(),
+            name='LogitDense')(y)
         return logits
 
 
@@ -404,9 +340,7 @@ class TransformerLM(nn.Module):
     @nn.compact
     def __call__(self,
                 inputs,
-                labels=None,
-                inputs_positions=None,
-                inputs_segmentation=None):
+                labels=None):
         """Applies TransformerLM on the inputs.
 
         Args:
@@ -428,22 +362,10 @@ class TransformerLM(nn.Module):
                 nn.make_attention_mask(inputs > 0, inputs > 0, dtype=config.dtype),
                 nn.make_causal_mask(inputs, dtype=config.dtype))
 
-        # Add segmentation block-diagonal attention masks if using segmented data.
-        if inputs_segmentation is not None:
-            decoder_mask = nn.combine_masks(
-                decoder_mask,
-                nn.make_attention_mask(
-                    inputs_segmentation,
-                    inputs_segmentation,
-                    jnp.equal,
-                    dtype=config.dtype))
-
         logits = Decoder(
             config=config, shared_embedding=None, name='Decoder')(
                     inputs,
                     labels=labels,
-                    inputs_positions=inputs_positions,
-                    inputs_segmentation=inputs_segmentation,
                     decoder_mask=decoder_mask)
         return logits.astype(self.config.dtype)
 
@@ -451,7 +373,6 @@ def make_ckpt_manager(save_dir):
     return CheckpointManager(
         save_dir, 
         PyTreeCheckpointer(),
-        # {'state': PyTreeCheckpointer(), 'config': PyTreeCheckpointer()}, 
         options=CheckpointManagerOptions(
                 keep_period=1,
                 best_fn=lambda x: x,
@@ -503,18 +424,9 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
     train_metrics = []
     eval_metrics = []
 
-    # compile for training
-    c_train_step = jax.jit(
-        functools.partial(train_step, config=config)
-    )
-    
-    c_eval_step = jax.jit(
-        functools.partial(eval_step, config=eval_config)
-    )
-
     for i in range(n_iters):
         batch = next(train_iter)
-        state, metrics = c_train_step(state, batch, rng=model_rng)
+        state, metrics = train_step(state, batch, config, rng=model_rng)
         train_metrics.append(metrics)
 
         if i % print_every == 0 or i == (n_iters-1):
@@ -522,7 +434,7 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
                 curr_eval_metrics = []
                 for _, batch in zip(range(eval_iters), eval_dl):
                     rng, eval_rng = jax.random.split(rng)
-                    metrics = c_eval_step(state, batch, rng=eval_rng)
+                    metrics = eval_step(state, batch, config, rng=eval_rng)
                     curr_eval_metrics.append(metrics)
                 curr_eval_metrics = stack_forest(curr_eval_metrics)
                 curr_eval_metrics = jax.tree_util.tree_map(jnp.mean, curr_eval_metrics)
@@ -550,6 +462,7 @@ def print_metric(step, m, is_eval=False):
     print(f'{prefix} step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  aon: {m["aon_accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
 
 
+@functools.partial(jax.jit, static_argnames='config')
 def train_step(state, batch, config, rng=None):
     train_keys = ['inputs', 'labels', 'mask']
     inputs, labels, mask = [batch.get(k, None) for k in train_keys]
@@ -588,6 +501,7 @@ def train_step(state, batch, config, rng=None):
     return new_state, metrics
 
 
+@functools.partial(jax.jit, static_argnames='config')
 def eval_step(state, batch, config, rng=None):
     train_keys = ['inputs', 'labels', 'mask']
     inputs, labels, mask = [batch.get(k, None) for k in train_keys]
@@ -668,12 +582,11 @@ def get_next_with_lab(prompt, labels, params, config):
     return prompt, labels
 
 
-def compute_metrics(logits, inputs, mask, labels=None, vocab_size=None,):
+def compute_metrics(logits, inputs, mask, vocab_size=None,):
     if vocab_size == None:
         vocab_size = logits.shape[-1]
 
     pred_tok_logits = logits[...,:-1,:vocab_size]
-    # pred_lab_logits = logits[...,:-1,vocab_size:] # TODO: add metrics for labels
     pred_inputs = inputs[...,1:]
     pred_mask = mask[...,:-1]
 
