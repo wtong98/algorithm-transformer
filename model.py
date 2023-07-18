@@ -672,7 +672,7 @@ pred_config = config.replace(deterministic=True)
 #     ))
 
 inputs = [4] * 11 + [1]
-predict_c(inputs, raw_state['params'], pred_config)
+predict_with_lab(inputs, raw_state['params'], pred_config)
 
 # predict(raw_state['params'], jnp.array(
 #     inputs), pred_config, train_ds.tok_to_idx['END'])
