@@ -32,7 +32,10 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
     for _, example in it:
         ans = example[0]
         prompt = ans[:len(ans)//2]
-        pred, _ = predict(params, prompt, config, train_ds.tok_to_idx['END'])
+        pred = predict(prompt, params, config)
+
+        if hasattr(pred, '__len__'):
+            pred = pred[0]
 
         if pred.shape == ans.shape and np.all(pred == ans):
             n_correct += 1
@@ -42,9 +45,10 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
     return n_correct / n_examples, fails
 
 
+n_iters = 3
 n_symbols = 2
-max_test_len = 50
-max_item_label = 50
+max_test_len = 15
+max_item_label = 15
 
 
 @dataclass
@@ -55,19 +59,22 @@ class Case:
     train_iters: int = 10_000
     res: dict = field(default_factory=dict)
     train_len_min: int = 1
-    train_len_max: int = 10
+    train_len_max: int = 5
 
+all_cases = []
+for i in range(n_iters):
+    all_cases.extend([
+        # Case('Item-Label Fixed', config=TransformerConfig(
+        #     vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
+        # ), save_dir='save/item_label_fixed'),
+        Case('Sinusoid', config=TransformerConfig(
+            vocab_size=n_symbols + 3), save_dir=f'save/sinusoid_{i}'),
+        Case('Random', config=TransformerConfig(
+            vocab_size=n_symbols +3, max_item_label=max_item_label), save_dir=f'save/item-label_{i}'),
+        Case('NoPE', config=TransformerConfig(
+            vocab_size=n_symbols +3, nope_embeding=True), train_iters=20_000, save_dir=f'save/nope_{i}'),
 
-all_cases = [
-    Case('Item-Label Fixed', config=TransformerConfig(
-        vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
-    ), save_dir='save/item_label_fixed'),
-    Case('Item-Label', config=TransformerConfig(
-        vocab_size=n_symbols +3, max_item_label=max_item_label), save_dir='save/item_label'),
-    Case('Sinusoid', config=TransformerConfig(
-        vocab_size=n_symbols + 3), save_dir='save/sinusoid'),
-
-]
+    ])
 
 # <codecell>
 for case in all_cases:
@@ -99,20 +106,20 @@ for case in all_cases:
 
 # <codecell>
 # TODO: remove non-serializable fields (stop gap)
-for case in all_cases:
-    case.config = case.config.replace(
-        kernel_init=None,
-        bias_init=None
-    )
+# for case in all_cases:
+#     case.config = case.config.replace(
+#         kernel_init=None,
+#         bias_init=None
+#     )
 
-with open('save/cases_3.pkl', 'wb') as fp:
+with open('save/cases_nope.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
-for case in all_cases:
-    case.config = case.config.replace(
-        kernel_init=nn.initializers.xavier_uniform(),
-        bias_init=nn.initializers.normal(stddev=1e-6)
-    )
+# for case in all_cases:
+#     case.config = case.config.replace(
+#         kernel_init=nn.initializers.xavier_uniform(),
+#         bias_init=nn.initializers.normal(stddev=1e-6)
+#     )
 
 # <codecell>
 with open('save/cases.pkl', 'rb') as fp:
@@ -128,8 +135,13 @@ df = pd.concat(all_df)
 
 # <codecell>
 plt.gcf().set_size_inches(12, 2)
-sns.barplot(df, x='len', y='acc', hue='name')
-plt.savefig('fig/generalization_acc_3.png')
+g = sns.barplot(df, x='len', y='acc', hue='name')
+g.legend_.set_title(None)
+sns.move_legend(g, 'lower right')
+
+plt.axvline(4.55, color='red', linestyle='dashed')
+plt.gcf().tight_layout()
+plt.savefig('fig/generalization_with_nope.png')
 
 
 # %%

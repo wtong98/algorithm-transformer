@@ -32,7 +32,7 @@ def evaluate_acc(c_next, length, config, n_symbols=2, n_examples=100, use_tqdm=F
     for _, example in it:
         ans = example[0]
         prompt = ans[:len(ans)//2]
-        pred = predict_c(c_next, prompt, config).flatten()
+        pred = predict(c_next, prompt, config).flatten()
 
         if pred.shape == ans.shape and np.all(pred == ans):
             n_correct += 1

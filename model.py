@@ -67,6 +67,8 @@ class TransformerConfig:
     max_item_label: int = -1  # TODO: unify with max_len
     freeze_embedding: bool = False
     sinus_embedding: bool = False
+    nope_embeding: bool = False
+    rel_pos_att: bool = False
 
     def kernel_init(self):
         init_f = getattr(nn.initializers, self.kernel_init_name)
@@ -121,23 +123,27 @@ class SingleHeadSelfAttention(nn.Module):
     config: TransformerConfig
 
     @nn.compact
-    def __call__(self, inputs, mask):
+    def __call__(self, inputs, mask, use_bias=False):
         dense = functools.partial(
             nn.Dense,
             features=self.config.qkv_dim,
             dtype=self.config.dtype,
             param_dtype=self.config.dtype,
             kernel_init=self.config.kernel_init(),
-            bias_init=self.config.bias_init())
+            bias_init=self.config.bias_init(),
+            use_bias=use_bias)
         
         query = dense(name='query')(inputs)
         key = dense(name='key')(inputs)
         value = dense(name='value')(inputs)
-
         depth = query.shape[-1]
-        query /= jnp.sqrt(depth)
 
-        attn_weights = jnp.einsum('...qd,...kd->...qk', query, key)
+        if self.config.rel_pos_att:
+            attn_weights = RelativePositionAttention(self.config)(query, key)
+        else:
+            attn_weights = jnp.einsum('...qd,...kd->...qk', query, key)
+
+        attn_weights /= jnp.sqrt(depth)
 
         attn_weights = jnp.where(mask.squeeze(), attn_weights, -999999)
         attn_weights = jax.nn.softmax(attn_weights)
@@ -145,6 +151,71 @@ class SingleHeadSelfAttention(nn.Module):
 
         attn_out = attn_weights @ value
         return attn_out
+
+
+class RelativePositionAttention(nn.Module):
+
+    config: TransformerConfig
+
+    @nn.compact
+    def __call__(self, query, key):
+        batch_size, length, depth = query.shape
+
+        content_bias = self.param('content_bias', self.config.kernel_init(), (1, 1, depth))
+        content_att = jnp.einsum('bqd,bkd->bqk', query + content_bias, key)
+
+        pe = sinusoidal_init(
+            max_len=self.config.max_len,
+            squeeze=True)(None, (depth,))[:length,:]
+        
+        pe = jnp.broadcast_to(pe, (batch_size,) + pe.shape)
+        pe = jnp.flip(pe)   # relative ordering
+
+        relative_key = nn.Dense(depth, use_bias=False)(pe)
+        relative_bias = self.param('relative_bias', self.config.kernel_init(), (1, 1, depth))
+        relative_att = jnp.einsum('bqd,bkd->bqk', query + relative_bias, relative_key)
+
+        self.sow('intermediates', 'rel_att_pre_shift', relative_att)
+        relative_att = relative_shift(relative_att)
+        self.sow('intermediates', 'rel_att', relative_att)
+
+        assert content_att.shape == relative_att.shape
+        return content_att + relative_att
+
+
+# TODO: cite
+def relative_shift(x: jax.Array):
+    def rel_shift_causal(logits: jax.Array) -> jax.Array:
+        """Shifts the relative logits, assuming causal attention.
+
+        Given inputs:
+            [[-4, -3, -2, -1],
+            [-4, -3, -2, -1]]
+
+        The shifted (and, later, masked) output is:
+            [[-3, -2, -1,  0],
+            [-4, -3, -2, -1]]
+
+        Args:
+            logits: input tensor of shape [T_q, T_v]
+
+        Returns:
+            A shifted version of the input of size [T_q, T_v].
+        """
+        t1, t2 = logits.shape
+        # We prepend zeros on the final timescale dimension.
+        to_pad = jnp.zeros_like(logits[..., :1])
+        x = jnp.concatenate((to_pad, logits), axis=-1)
+
+        # Reshape trick to  shift input.
+        x = jnp.reshape(x, [t2 + 1, t1])
+
+        # Remove extra time dimension and re-shape.
+        x = jax.lax.slice(x, [1] + [0] * (x.ndim - 1), x.shape)
+
+        return jnp.reshape(x, [t1, t2])
+    
+    return jax.vmap(rel_shift_causal)(x)
 
 
 class AddPositionEmbs(nn.Module):
@@ -204,7 +275,10 @@ class AddPositionEmbs(nn.Module):
                 pe = lax.dynamic_slice(pos_embedding,
                                         jnp.array((0, i, 0)),
                                         (1, 1, df))
-        return inputs + pe
+        if config.nope_embeding or config.rel_pos_att:
+            return inputs
+        else:
+            return inputs + pe
 
 
 class AddLabelItemEmbs(nn.Module):
@@ -510,15 +584,15 @@ def eval_step(state, batch, config, rng=None):
     return compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
 
 
-def predict(params, prompt, config, eos_id, use_tqdm=False):
+def predict(prompt, params, config, use_tqdm=False):
     if config.max_item_label > 0:
-        return predict_with_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
+        return predict_with_lab(prompt, params, config, use_tqdm=use_tqdm)
     else:
-        return predict_no_lab(params, prompt, config, eos_id, use_tqdm=use_tqdm)
+        return predict_no_lab(prompt, params, config, use_tqdm=use_tqdm)
 
 
 # TODO: test
-def predict_no_lab(params, prompt, config, use_tqdm=False):
+def predict_no_lab(prompt, params, config, use_tqdm=False):
     prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
@@ -528,12 +602,12 @@ def predict_no_lab(params, prompt, config, use_tqdm=False):
         it = tqdm(it)
 
     for _ in it:
-        prompt = get_next(prompt, params, config)
+        prompt, logits = get_next(prompt, params, config)
 
         if prompt[0,-1] == 2: # END == 2
             break
 
-    return prompt.flatten(), None
+    return prompt.flatten(), {'logits': logits}
 
 
 @functools.partial(jax.jit, static_argnames='config')
@@ -543,7 +617,7 @@ def get_next(prompt, params, config):
     nxt_tok = jnp.argmax(logits, -1)[0,-1].reshape(1, 1)
 
     prompt = jnp.append(prompt, nxt_tok, axis=1)
-    return prompt
+    return prompt, logits
 
 
 def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, use_tqdm=False):
@@ -565,7 +639,7 @@ def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, use_
         if prompt[0,-1] == 2: # END == 2
             break
     
-    return prompt
+    return prompt, labels
 
 
 @functools.partial(jax.jit, static_argnames='config')
@@ -582,7 +656,7 @@ def get_next_with_lab(prompt, labels, params, config):
     return prompt, labels
 
 
-def compute_metrics(logits, inputs, mask, vocab_size=None,):
+def compute_metrics(logits, inputs, mask, vocab_size=None):
     if vocab_size == None:
         vocab_size = logits.shape[-1]
 
@@ -606,30 +680,32 @@ def compute_metrics(logits, inputs, mask, vocab_size=None,):
     conf = jnp.sum(probs * pred_mask) / jnp.sum(pred_mask)
 
     return {
-            'loss': loss,
-            'accuracy': acc,
-            'aon_accuracy': aon_acc,
-            'confidence': conf
+        'loss': loss,
+        'accuracy': acc,
+        'aon_accuracy': aon_acc,
+        'confidence': conf
     }
 
+# <codecell>
+# '''
 n_symbols = 2
 max_item_label = 50
 
-config = TransformerConfig(
-    n_symbols + 3, deterministic=True, max_item_label=max_item_label)
-train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
-                       max_item_label=max_item_label)
-
 # config = TransformerConfig(
-#     n_symbols + 3, deterministic=True, posemb_scramble=False)
-# train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols)
+#     n_symbols + 3, deterministic=True, max_item_label=max_item_label)
+# train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
+#                        max_item_label=max_item_label)
+
+config = TransformerConfig(
+    n_symbols + 3, rel_pos_att=True)
+train_ds = CopyDataset(range(1, 4+1), vocab_size=n_symbols)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=1_000, print_every=100, save_dir='scratch/save/tmp')
+                    n_iters=10_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
@@ -653,7 +729,7 @@ for ax, metrics in zip(axs, [train, test]):
     # ax.plot(metrics['confidence'], label='confidence')
     # ax.plot(metrics['loss'], label='loss')
 
-plt.savefig('scratch/fig/item_label_loss_curve.png')
+# plt.savefig('scratch/fig/item_label_loss_curve.png')
 
 # <codecell>
 mngr = make_ckpt_manager('scratch/save/tmp')
@@ -664,18 +740,15 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-pred_config = config.replace(deterministic=True)
+inputs = [3, 3, 3, 4, 3, 4, 1]
+# predict_with_lab(inputs, raw_state['params'], config)
+seq, info = predict_no_lab(inputs, raw_state['params'], config)
+seq
 
-# c_next = jax.jit(
-#     functools.partial(
-#         get_next_out, params=raw_state['params'], config=pred_config
-#     ))
+# m = TransformerLM(config)
+# _, intm = m.apply({'params': raw_state['params']}, jnp.array(inputs).reshape(1, -1), mutable='intermediates')
+# intm['intermediates']['Decoder']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['rel_att'][0]
 
-inputs = [4] * 11 + [1]
-predict_with_lab(inputs, raw_state['params'], pred_config)
-
-# predict(raw_state['params'], jnp.array(
-#     inputs), pred_config, train_ds.tok_to_idx['END'])
 
 # %%
 
@@ -718,17 +791,17 @@ def plot_attn_weights(attn_weights, seq, idx_to_tok):
 
 
 def plot_sequence(in_seq, params, config):
-    seq, labs = predict(params, jnp.array(
-        in_seq), config, train_ds.tok_to_idx['END'])
+    seq, labs = predict(jnp.array(in_seq), params, config)
     # seq = jnp.array([3,3,4,3,4,1,3,3,4,3,4])
+    seq = seq[:(len(in_seq)*2)]
     print('SEQ', seq)
     attn_weights = get_attn_weights(seq, params, config, labels=labs)
     plot_attn_weights(attn_weights, seq, train_ds.idx_to_tok)
 
 
 # plot_sequence([3,3,4,3,4,4,4,3,3,4,3,4,3,3,4,3,3,4,1], raw_state['params'], pred_config)
-plot_sequence(inputs, raw_state['params'], pred_config)
-plt.savefig('fig/fix_sinus_attn_15.png')
+plot_sequence(inputs, raw_state['params'], config)
+# plt.savefig('fig/fix_sinus_attn_15.png')
 
 # %%
 '''
