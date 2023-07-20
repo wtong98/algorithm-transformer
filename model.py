@@ -54,9 +54,6 @@ class TransformerConfig:
     qkv_dim: int = 1024
     mlp_dim: int = 128
     max_len: int = 100
-    dropout_rate: float = 0.
-    attention_dropout_rate: float = 0.
-    deterministic: bool = True
     decode: bool = False
     kernel_init_name = 'xavier_uniform'
     kernel_init_params: FrozenDict = struct.field(default_factory=FrozenDict)
@@ -69,6 +66,8 @@ class TransformerConfig:
     sinus_embedding: bool = False
     nope_embeding: bool = False
     rel_pos_att: bool = False
+    rel_pos_rand_max: int = 0
+
 
     def kernel_init(self):
         init_f = getattr(nn.initializers, self.kernel_init_name)
@@ -123,7 +122,7 @@ class SingleHeadSelfAttention(nn.Module):
     config: TransformerConfig
 
     @nn.compact
-    def __call__(self, inputs, mask, use_bias=False):
+    def __call__(self, inputs, mask, idxs=None, use_bias=False):
         dense = functools.partial(
             nn.Dense,
             features=self.config.qkv_dim,
@@ -139,7 +138,7 @@ class SingleHeadSelfAttention(nn.Module):
         depth = query.shape[-1]
 
         if self.config.rel_pos_att:
-            attn_weights = RelativePositionAttention(self.config)(query, key)
+            attn_weights = RelativePositionAttention(self.config)(query, key, idxs=idxs)
         else:
             attn_weights = jnp.einsum('...qd,...kd->...qk', query, key)
 
@@ -158,7 +157,7 @@ class RelativePositionAttention(nn.Module):
     config: TransformerConfig
 
     @nn.compact
-    def __call__(self, query, key):
+    def __call__(self, query, key, idxs=None):
         batch_size, length, depth = query.shape
 
         content_bias = self.param('content_bias', self.config.kernel_init(), (1, 1, depth))
@@ -166,8 +165,14 @@ class RelativePositionAttention(nn.Module):
 
         pe = sinusoidal_init(
             max_len=self.config.max_len,
-            squeeze=True)(None, (depth,))[:length,:]
+            squeeze=True)(None, (depth,))
         
+        if idxs is not None:
+            pe = pe[idxs, :]
+        else:
+            pe = pe[:length, :]
+        
+        self.sow('intermediates', 'rand_idxs', idxs)
         pe = jnp.broadcast_to(pe, (batch_size,) + pe.shape)
         pe = jnp.flip(pe)   # relative ordering
 
@@ -175,9 +180,7 @@ class RelativePositionAttention(nn.Module):
         relative_bias = self.param('relative_bias', self.config.kernel_init(), (1, 1, depth))
         relative_att = jnp.einsum('bqd,bkd->bqk', query + relative_bias, relative_key)
 
-        self.sow('intermediates', 'rel_att_pre_shift', relative_att)
         relative_att = relative_shift(relative_att)
-        self.sow('intermediates', 'rel_att', relative_att)
 
         assert content_att.shape == relative_att.shape
         return content_att + relative_att
@@ -257,7 +260,7 @@ class AddPositionEmbs(nn.Module):
             pos_embedding = self.param('pos_embedding', config.posemb_init, pos_emb_shape)
         
         if config.posemb_scramble:
-            key = self.make_rng('position')
+            key = self.make_rng('rng')
             rand_idxs = jax.random.choice(key, config.max_len, shape=(length,), replace=False)
             rand_idxs = jnp.sort(rand_idxs)
             pe = pos_embedding[:, rand_idxs, :]
@@ -312,7 +315,8 @@ class EncoderDecoder1DBlock(nn.Module):
     @nn.compact
     def __call__(self,
                 inputs,
-                decoder_mask=None):
+                decoder_mask=None,
+                idxs=None):
         """Applies EncoderDecoder1DBlock module.
 
         Args:
@@ -330,9 +334,8 @@ class EncoderDecoder1DBlock(nn.Module):
         x = inputs
         self.sow('intermediates', 'pre_attention', x)
         self.sow('intermediates', 'mask', decoder_mask)
-        x = SingleHeadSelfAttention(config)(x, decoder_mask)
-        x = nn.Dropout(rate=config.dropout_rate)(
-            x, deterministic=config.deterministic)
+        x = SingleHeadSelfAttention(config)(x, decoder_mask, idxs=idxs)
+
         x = x + inputs
 
         return x
@@ -382,17 +385,23 @@ class Decoder(nn.Module):
         else:
             y = AddPositionEmbs(
                 config=config, decode=config.decode, name='PositionEmb')(y)
-        y = nn.Dropout(rate=config.dropout_rate)(
-            y, deterministic=config.deterministic)
             
         y = y.astype(config.dtype)
+
+        rand_idxs = None
+        if self.config.rel_pos_rand_max > 0:
+            key = self.make_rng('rng')
+            rand_idxs = 1 + jax.random.choice(key, self.config.rel_pos_rand_max, shape=(y.shape[1] - 1,), replace=False)
+            rand_idxs = jnp.sort(rand_idxs)
+            rand_idxs = jnp.concatenate((jnp.zeros(1,), rand_idxs)).astype(int)
 
         # Target-Input Decoder
         for lyr in range(config.num_layers):
             y = EncoderDecoder1DBlock(
                 config=config, name=f'TransformerBlock_{lyr}')(
                         y,
-                        decoder_mask=decoder_mask)
+                        decoder_mask=decoder_mask,
+                        idxs=rand_idxs)
 
         logits = nn.Dense(
             config.vocab_size + config.max_item_label + 1,
@@ -454,11 +463,10 @@ def make_ckpt_manager(save_dir):
         
     )
 
-def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=None, print_every=1_000, save_dir='save/model'):
+def train(config: TransformerConfig, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=None, print_every=1_000, save_dir='save/model'):
     if os.path.exists(save_dir):
         shutil.rmtree(save_dir)
 
-    eval_config = config.replace(deterministic=True)
     train_iter = iter(train_dl)
     mngr = make_ckpt_manager(save_dir)
 
@@ -466,12 +474,16 @@ def train(config, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_
         seed = int(np.random.random() * 1e5)
 
     rng = jax.random.PRNGKey(seed)
-    rng, params_rng, dropout_rng, position_rng = jax.random.split(rng, num=4)
+    rng, params_rng, global_rng = jax.random.split(rng, num=3)
 
-    input_shape = (train_dl.batch_size, config.max_len)
-    model = TransformerLM(eval_config)
+    max_len = config.max_len
+    if config.max_item_label > 0 or config.rel_pos_rand_max > 0:
+        max_len = max(config.max_item_label, config.rel_pos_rand_max)
 
-    init_var = jax.jit(model.init)({'dropout': dropout_rng, 'position': position_rng, 'params': params_rng}, jnp.ones(input_shape, jnp.float32), labels=jnp.ones(input_shape, jnp.int32))
+    input_shape = (train_dl.batch_size, max_len)
+    model = TransformerLM(config)
+
+    init_var = jax.jit(model.init)({'rng': global_rng, 'params': params_rng}, jnp.ones(input_shape, jnp.float32), labels=jnp.ones(input_shape, jnp.int32))
 
     opt = optax.adamw(lr)
 
@@ -543,14 +555,14 @@ def train_step(state, batch, config, rng=None):
     # print('LABS', labels)
     
     rng = jax.random.fold_in(rng, state.step)
-    rng, dropout_rng, position_rng = jax.random.split(rng, num=3)
+    rng, global_rng = jax.random.split(rng)
 
     def loss_fn(params):
         logits = TransformerLM(config).apply(
             {'params': params},
             inputs,
             labels=labels,
-            rngs={'dropout': dropout_rng, 'position': position_rng}
+            rngs={'rng': global_rng}
         )
         
         tok_logits, label_logits = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
@@ -580,29 +592,33 @@ def eval_step(state, batch, config, rng=None):
     train_keys = ['inputs', 'labels', 'mask']
     inputs, labels, mask = [batch.get(k, None) for k in train_keys]
 
-    logits = TransformerLM(config).apply({'params': state.params}, inputs, labels=labels, rngs={'position': rng})
+    logits = TransformerLM(config).apply({'params': state.params}, inputs, labels=labels, rngs={'rng': rng})
     return compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
 
 
-def predict(prompt, params, config, use_tqdm=False):
+def predict(prompt, params, config, seed=None, use_tqdm=False):
     if config.max_item_label > 0:
-        return predict_with_lab(prompt, params, config, use_tqdm=use_tqdm)
+        return predict_with_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
     else:
-        return predict_no_lab(prompt, params, config, use_tqdm=use_tqdm)
+        return predict_no_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
 
 
 # TODO: test
-def predict_no_lab(prompt, params, config, use_tqdm=False):
+def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False):
     prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
+
+    if seed == None:
+        seed = np.random.randint(1, 99999)
+    rng = jax.random.PRNGKey(seed)
 
     it = range(config.max_len - prompt.shape[1])
     if use_tqdm:
         it = tqdm(it)
 
     for _ in it:
-        prompt, logits = get_next(prompt, params, config)
+        prompt, logits = get_next(prompt, params, config, rng=rng)
 
         if prompt[0,-1] == 2: # END == 2
             break
@@ -611,16 +627,16 @@ def predict_no_lab(prompt, params, config, use_tqdm=False):
 
 
 @functools.partial(jax.jit, static_argnames='config')
-def get_next(prompt, params, config):
+def get_next(prompt, params, config, rng=None):
     m = TransformerLM(config)
-    logits = m.apply({'params': params}, prompt)
+    logits = m.apply({'params': params}, prompt, rngs={'rng': rng})
     nxt_tok = jnp.argmax(logits, -1)[0,-1].reshape(1, 1)
 
     prompt = jnp.append(prompt, nxt_tok, axis=1)
     return prompt, logits
 
 
-def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, use_tqdm=False):
+def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, seed=None, use_tqdm=False):
     prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
     labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 1, replace=False))
@@ -629,12 +645,16 @@ def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, use_
     prompt = prompt.reshape(1, -1)
     labels = labels.reshape(1, -1)
 
+    if seed == None:
+        seed = np.random.randint(1, 99999)
+    rng = jax.random.PRNGKey(seed)
+
     it = range(config.max_len - prompt.shape[1])
     if use_tqdm:
         it = tqdm(it)
 
     for _ in it:
-        prompt, labels = get_next_with_lab(prompt, labels, params, config)
+        prompt, labels = get_next_with_lab(prompt, labels, params, config, rng=rng)
 
         if prompt[0,-1] == 2: # END == 2
             break
@@ -643,9 +663,9 @@ def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, use_
 
 
 @functools.partial(jax.jit, static_argnames='config')
-def get_next_with_lab(prompt, labels, params, config):
+def get_next_with_lab(prompt, labels, params, config, rng=None):
     m = TransformerLM(config)
-    logits = m.apply({'params': params}, prompt, labels=labels)
+    logits = m.apply({'params': params}, prompt, labels=labels, rngs={'rng': rng})
     logits_tok, logits_lab = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
 
     nxt_tok = jnp.argmax(logits_tok, -1)[0,-1].reshape(1, 1)
@@ -690,15 +710,18 @@ def compute_metrics(logits, inputs, mask, vocab_size=None):
 # '''
 n_symbols = 2
 max_item_label = 50
+max_train_len = 5
+
 
 # config = TransformerConfig(
-#     n_symbols + 3, deterministic=True, max_item_label=max_item_label)
+#     n_symbols + 3, max_item_label=max_item_label)
 # train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
 #                        max_item_label=max_item_label)
 
 config = TransformerConfig(
-    n_symbols + 3, rel_pos_att=True)
-train_ds = CopyDataset(range(1, 4+1), vocab_size=n_symbols)
+    # n_symbols + 3, rel_pos_att=True, rel_pos_rand_max=max_item_label, max_len=512)
+    n_symbols + 3, max_item_label=max_item_label//2, max_len=512)
+train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
@@ -740,14 +763,14 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [3, 3, 3, 4, 3, 4, 1]
+inputs = [4, 3, 3, 4, 1] # TODO: something may be wrong with item-label scheme
 # predict_with_lab(inputs, raw_state['params'], config)
-seq, info = predict_no_lab(inputs, raw_state['params'], config)
+seq, info = predict(inputs, raw_state['params'], config)
 seq
 
 # m = TransformerLM(config)
-# _, intm = m.apply({'params': raw_state['params']}, jnp.array(inputs).reshape(1, -1), mutable='intermediates')
-# intm['intermediates']['Decoder']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['rel_att'][0]
+# _, intm = m.apply({'params': raw_state['params']}, jnp.array(inputs).reshape(1, -1), mutable='intermediates', rngs={'rng': jax.random.PRNGKey(5)})
+# intm['intermediates']['Decoder']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['rand_idxs'][0]
 
 
 # %%
