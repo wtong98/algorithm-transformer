@@ -47,7 +47,7 @@ def get_probs(prompt, labels, params, config):
     prompt = prompt.reshape(1, -1)
     labels = labels.reshape(1, -1)
 
-    m = TransformerLM(config)
+    m = Transformer(config)
     logits = m.apply({'params': params}, prompt, labels=labels)
     logits_tok, logits_labs = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
     probs_tok = jax.nn.softmax(logits_tok[[0],-1, 2:])  # normalized over returnable values
@@ -103,7 +103,7 @@ class CopyTransformerAuto:
         self.n_samples_per_len = n_samples_per_len
         self.squelch_prob = squelch_prob
 
-        self.model = TransformerLM(self.config)
+        self.model = Transformer(self.config)
         self.n_symbols = len(tok_to_idx) - 3
         
         self.alpha_symbols = [chr(start_char + i) for i in range(self.n_symbols)]

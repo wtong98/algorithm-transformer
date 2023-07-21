@@ -159,7 +159,7 @@ def get_attn_weights(seq, params, config, labels=None):
         labels = labels.reshape(1, -1)
 
     for i in range(config.num_layers):
-        m = TransformerLM(config)
+        m = Transformer(config)
         _, intm = m.apply({'params': params}, seq.reshape(
             1, -1), labels=labels, mutable='intermediates')
         attn_weights = intm['intermediates']['Decoder'][f'TransformerBlock_{i}'][
