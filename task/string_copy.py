@@ -10,7 +10,6 @@ from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 start_char = 97    # ASCII 97 corresponds to 'a'
 
 
-# TODO: add randomized label-item embed here <-- STOPPED HERE
 class CopyDataset(IterableDataset):
     def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False, max_item_label=-1) -> None:
         self.vocab_size = vocab_size
@@ -97,5 +96,5 @@ if __name__ == '__main__':
     dl = to_dataloader(ds, batch_size=8)
     ex = next(iter(ds))[0]
     # ex = ex[:len(ex)//2]
-    print(type(ex))
+    print(ex)
     # print(next(iter(ds)))

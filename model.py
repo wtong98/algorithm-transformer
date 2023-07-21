@@ -41,7 +41,7 @@ import optax
 
 from tqdm import tqdm
 
-from task import *
+from task.string_copy import *
 
 @struct.dataclass
 class TransformerConfig:
@@ -122,7 +122,7 @@ class SingleHeadSelfAttention(nn.Module):
     config: TransformerConfig
 
     @nn.compact
-    def __call__(self, inputs, mask, idxs=None, use_bias=False):
+    def __call__(self, inputs, mask=None, idxs=None, use_bias=False):
         dense = functools.partial(
             nn.Dense,
             features=self.config.qkv_dim,
@@ -144,7 +144,9 @@ class SingleHeadSelfAttention(nn.Module):
 
         attn_weights /= jnp.sqrt(depth)
 
-        attn_weights = jnp.where(mask.squeeze(), attn_weights, -999999)
+        if mask is not None:
+            attn_weights = jnp.where(mask.squeeze(), attn_weights, np.info(np.int32).min)
+
         attn_weights = jax.nn.softmax(attn_weights)
         self.sow('intermediates', 'attention_weights', attn_weights)
 
@@ -226,10 +228,8 @@ class AddPositionEmbs(nn.Module):
 
     Args:
         config: TransformerConfig dataclass containing hyperparameters.
-        decode: whether to run in single-position autoregressive mode.
     """
     config: TransformerConfig
-    decode: bool = False
 
     @nn.compact
     def __call__(self, inputs):
@@ -267,17 +267,6 @@ class AddPositionEmbs(nn.Module):
         else:
             pe = pos_embedding[:, :length, :]
         
-        # We use a cache position index for tracking decoding position.
-        if self.decode:
-            is_initialized = self.has_variable('cache', 'cache_index')
-            cache_index = self.variable('cache', 'cache_index', lambda: jnp.array(0, dtype=jnp.uint32))
-            if is_initialized:
-                i = cache_index.value
-                cache_index.value = i + 1
-                _, _, df = pos_embedding.shape
-                pe = lax.dynamic_slice(pos_embedding,
-                                        jnp.array((0, i, 0)),
-                                        (1, 1, df))
         if config.nope_embeding or config.rel_pos_att:
             return inputs
         else:
@@ -359,7 +348,6 @@ class Decoder(nn.Module):
         """Applies Transformer model on the inputs.
 
         Args:
-            encoded: encoded input data from encoder.
             inputs: input data.
             decoder_mask: decoder self-attention mask.
 
@@ -370,22 +358,15 @@ class Decoder(nn.Module):
         assert inputs.ndim == 2  # (batch, len)
 
         # Target Embedding
-        if self.shared_embedding is None:
-            output_embed = nn.Embed(
-                    num_embeddings=config.vocab_size,
-                    features=config.emb_dim,
-                    embedding_init=nn.initializers.normal(stddev=1.0))
-        else:
-            output_embed = self.shared_embedding
+        y = nn.Embed(
+                num_embeddings=config.vocab_size,
+                features=config.emb_dim,
+                embedding_init=nn.initializers.normal(stddev=1.0))(inputs)
 
-        y = inputs.astype('int32')
-        y = output_embed(y)
         if config.max_item_label > 0:
             y = AddLabelItemEmbs(config=config)(y, labels)
         else:
-            y = AddPositionEmbs(
-                config=config, decode=config.decode, name='PositionEmb')(y)
-            
+            y = AddPositionEmbs(config=config)(y)
         y = y.astype(config.dtype)
 
         rand_idxs = None
