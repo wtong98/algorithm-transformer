@@ -48,10 +48,10 @@ class TransformerConfig:
     """Global hyperparameters used to minimize obnoxious kwarg plumbing."""
     vocab_size: int
     dtype: Any = jnp.float32
-    emb_dim: int = 1024
+    emb_dim: int = 128
     num_heads: int = 1
-    num_layers: int = 2
-    qkv_dim: int = 1024
+    num_layers: int = 6
+    qkv_dim: int = 128
     mlp_dim: int = 128
     max_len: int = 100
     decode: bool = False
@@ -659,7 +659,7 @@ def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, seed
         if prompt[0,-1] == 2: # END == 2
             break
     
-    return prompt, labels
+    return prompt.flatten(), {'labels': labels}
 
 
 @functools.partial(jax.jit, static_argnames='config')
@@ -706,11 +706,42 @@ def compute_metrics(logits, inputs, mask, vocab_size=None):
         'confidence': conf
     }
 
+
+def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examples=100, use_tqdm=False):
+    train_ds = CopyDataset(length, vocab_size=n_symbols,
+                           max_item_label=max_item_label)
+
+    n_correct = 0
+    fails = []
+
+    it = zip(range(n_examples), iter(train_ds))
+    if use_tqdm:
+        it = tqdm(it, total=n_examples)
+
+    for _, example in it:
+        ans = example[0]
+        prompt = ans[:len(ans)//2]
+        try:
+            pred = predict(prompt, params, config)
+        except Exception as e:
+            print('failed to predict: ', e)
+            fails.append((prompt, None))
+            continue
+
+        if hasattr(pred, '__len__'):
+            pred = pred[0]
+
+        if pred.shape == ans.shape and np.all(pred == ans):
+            n_correct += 1
+        else:
+            fails.append((prompt, pred))
+
+    return n_correct / n_examples, fails
 # <codecell>
 # '''
 n_symbols = 2
 max_item_label = 50
-max_train_len = 5
+max_train_len = 10
 
 
 # config = TransformerConfig(
@@ -719,16 +750,16 @@ max_train_len = 5
 #                        max_item_label=max_item_label)
 
 config = TransformerConfig(
-    # n_symbols + 3, rel_pos_att=True, rel_pos_rand_max=max_item_label, max_len=512)
-    n_symbols + 3, max_item_label=max_item_label//2, max_len=512)
-train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols)
+    n_symbols + 3, rel_pos_att=True, rel_pos_rand_max=max_item_label*2, max_len=512)
+    # n_symbols + 3, max_item_label=max_item_label//2, max_len=512)
+train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=10_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=20_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
@@ -763,7 +794,7 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [4, 3, 3, 4, 1] # TODO: something may be wrong with item-label scheme
+inputs = [4, 3, 3, 4, 3, 3, 1]
 # predict_with_lab(inputs, raw_state['params'], config)
 seq, info = predict(inputs, raw_state['params'], config)
 seq
@@ -772,6 +803,8 @@ seq
 # _, intm = m.apply({'params': raw_state['params']}, jnp.array(inputs).reshape(1, -1), mutable='intermediates', rngs={'rng': jax.random.PRNGKey(5)})
 # intm['intermediates']['Decoder']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['rand_idxs'][0]
 
+# <codecell>
+evaluate_acc(11, raw_state['params'], config, max_item_label=max_item_label, n_examples=10)
 
 # %%
 

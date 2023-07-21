@@ -32,7 +32,12 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
     for _, example in it:
         ans = example[0]
         prompt = ans[:len(ans)//2]
-        pred = predict(prompt, params, config)
+        try:
+            pred = predict(prompt, params, config)
+        except Exception as e:
+            print('failed to predict: ', e)
+            fails.append((prompt, None))
+            continue
 
         if hasattr(pred, '__len__'):
             pred = pred[0]
@@ -56,7 +61,7 @@ class Case:
     name: str
     config: TransformerConfig
     save_dir: str
-    train_iters: int = 10_000
+    train_iters: int = 20_000
     res: dict = field(default_factory=dict)
     train_len_min: int = 1
     train_len_max: int = 5
@@ -64,16 +69,19 @@ class Case:
 all_cases = []
 for i in range(n_iters):
     all_cases.extend([
-        # Case('Item-Label Fixed', config=TransformerConfig(
-        #     vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
-        # ), save_dir='save/item_label_fixed'),
+        Case('NoPE', config=TransformerConfig(
+            vocab_size=n_symbols +3, nope_embeding=True), save_dir=f'save/nope_{i}'),
         Case('Sinusoid', config=TransformerConfig(
             vocab_size=n_symbols + 3), save_dir=f'save/sinusoid_{i}'),
-        Case('Random', config=TransformerConfig(
+        Case('Sinusoid (Item-Label)', config=TransformerConfig(
+            vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
+        ), save_dir=f'save/item-label-fixed_{i}'),
+        Case('Relative', config=TransformerConfig(
+            vocab_size=n_symbols + 3, rel_pos_att=True), save_dir=f'save/relative_{i}'),
+        Case('Random (Relative)', config=TransformerConfig(
+            vocab_size=n_symbols +3, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
+        Case('Random (Item-Label)', config=TransformerConfig(
             vocab_size=n_symbols +3, max_item_label=max_item_label), save_dir=f'save/item-label_{i}'),
-        Case('NoPE', config=TransformerConfig(
-            vocab_size=n_symbols +3, nope_embeding=True), train_iters=20_000, save_dir=f'save/nope_{i}'),
-
     ])
 
 # <codecell>
@@ -100,7 +108,7 @@ for case in all_cases:
     case.res['gen_acc'] = []
     case.res['fails'] = []
     for ex_len in tqdm(reversed(range(1, max_test_len + 1)), total=max_test_len):
-        acc, fails = evaluate_acc(ex_len, params, case.config, max_item_label)
+        acc, fails = evaluate_acc(ex_len, params, case.config, max_item_label=max_item_label, n_examples=30)
         case.res['gen_acc'].append({'len': ex_len, 'acc': acc})
         case.res['fails'].append({'len': ex_len, 'examples': fails})
 
@@ -112,7 +120,7 @@ for case in all_cases:
 #         bias_init=None
 #     )
 
-with open('save/cases_nope.pkl', 'wb') as fp:
+with open('save/cases.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
 # for case in all_cases:
@@ -139,9 +147,9 @@ g = sns.barplot(df, x='len', y='acc', hue='name')
 g.legend_.set_title(None)
 sns.move_legend(g, 'lower right')
 
-plt.axvline(4.55, color='red', linestyle='dashed')
+plt.axvline(4.5, color='red', linestyle='dashed')
 plt.gcf().tight_layout()
-plt.savefig('fig/generalization_with_nope.png')
+plt.savefig('fig/generalization.png')
 
 
 # %%
