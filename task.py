@@ -3,6 +3,9 @@ A simple copying task
 """
 
 # <codecell>
+import functools
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 from torch.utils.data import IterableDataset, DataLoader, get_worker_info
@@ -12,15 +15,25 @@ start_char = 97    # ASCII 97 corresponds to 'a'
 
 # TODO: add randomized label-item embed here <-- STOPPED HERE
 class CopyDataset(IterableDataset):
-    def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False, max_item_label=-1) -> None:
+    def __init__(self, lengths, 
+                       probs=None, 
+                       vocab_size=2, 
+                       weight_prop=False, 
+                       max_item_label=-1,
+                       seed=None) -> None:
         self.vocab_size = vocab_size
         self.weight_prop = weight_prop
         self.max_item_label = max_item_label
+
+        if seed is None:
+            seed = np.random.randint(1, np.iinfo(np.int32).max)
+        self.rng = jax.random.PRNGKey(seed)
 
         try:
             self.lengths = list(lengths)
         except TypeError:
             self.lengths = [lengths]
+        self.lengths = jnp.array(lengths)
 
         self.probs = probs
         if self.probs == None and self.weight_prop:
@@ -34,35 +47,56 @@ class CopyDataset(IterableDataset):
             'END',
         ] + self.vocab_toks
         self.tok_to_idx = {val:i for i, val in enumerate(self.idx_to_tok)}
-
-        self.seed = None
-        worker_info = get_worker_info()
-        if worker_info != None:
-            self.seed = get_worker_info().seed  # TODO: confirm is different
     
     def __iter__(self):
         return self
 
     def __next__(self):
-        rng = np.random.default_rng(self.seed)
-        vocab_idxs = [self.tok_to_idx[tok] for tok in self.vocab_toks]
-        length = rng.choice(self.lengths, p=self.probs)
+        self.rng, key1, key2 = jax.random.split(self.rng, num=3)
 
-        pattern = rng.choice(vocab_idxs, size=length)
-        pattern_mask = np.ones(len(pattern))
-        xs = np.concatenate((pattern, [self.tok_to_idx['GO']], pattern, [self.tok_to_idx['END']]))
-        pred_mask = np.concatenate((
+        # vocab_idxs = jnp.array([self.tok_to_idx[tok] for tok in self.vocab_toks])
+        length = jax.random.choice(key1, self.lengths, p=self.probs)
+        return self.sample(key2, length.item())
+
+        # pattern = jax.random.choice(key, vocab_idxs, shape=(length,))
+        # pattern_mask = jnp.ones(len(pattern))
+        # xs = jnp.concatenate((pattern, [self.tok_to_idx['GO']], pattern, [self.tok_to_idx['END']]))
+        # pred_mask = jnp.concatenate((
+        #     0 * pattern_mask,  # ignore prefix
+        #     [1],               # start tracking at GO
+        #     pattern_mask,      # predict output
+        #     [0]                # ignored final prediction
+        # ))
+
+        # if self.max_item_label > 0:
+        #     item_labels = jnp.sort(jax.random.choice(key, np.arange(1, self.max_item_label + 1), size=length, replace=False))
+        #     item_labels = jnp.concatenate((item_labels, [0], item_labels))  # reflect copy operation
+        # else:
+        #     item_labels = jnp.zeros(length)
+
+        # return xs, item_labels, pred_mask
+    
+    @functools.partial(jax.jit, static_argnums=(0, 2))
+    def sample(self, key, length):
+        key, key1, key2 = jax.random.split(key, num=3)
+
+        pattern = jax.random.randint(key1, (length,), minval=0, maxval=self.vocab_size) + 3   # 3 special tokens
+        pattern_mask = jnp.ones(length)
+        # xs = jnp.concatenate((pattern, jnp.array([self.tok_to_idx['GO']]), pattern, jnp.array([self.tok_to_idx['END']])))
+        xs = jnp.concatenate((pattern, jnp.ones((1,)), pattern, 2 * jnp.ones((1,))))
+
+        pred_mask = jnp.concatenate((
             0 * pattern_mask,  # ignore prefix
-            [1],               # start tracking at GO
+            jnp.ones((1,)),    # start tracking at GO
             pattern_mask,      # predict output
-            [0]                # ignored final prediction
+            jnp.zeros((1,))     # ignored final prediction
         ))
 
         if self.max_item_label > 0:
-            item_labels = np.sort(rng.choice(np.arange(1, self.max_item_label + 1), size=length, replace=False))
-            item_labels = np.concatenate((item_labels, [0], item_labels))  # reflect copy operation
+            item_labels = jnp.sort(jax.random.choice(key2, np.arange(1, self.max_item_label + 1), shape=(length,), replace=False))
+            item_labels = jnp.concatenate((item_labels, jnp.zeros((1,)), item_labels))  # reflect copy operation
         else:
-            item_labels = np.zeros(length)
+            item_labels = jnp.zeros(length)
 
         return xs, item_labels, pred_mask
 
@@ -97,5 +131,9 @@ if __name__ == '__main__':
     dl = to_dataloader(ds, batch_size=8)
     ex = next(iter(ds))[0]
     # ex = ex[:len(ex)//2]
-    print(type(ex))
+    print(ex)
     # print(next(iter(ds)))
+# %%
+# it = iter(dl)
+# next(it)
+# %timeit next(it)
