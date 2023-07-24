@@ -98,3 +98,4 @@ if __name__ == '__main__':
     # ex = ex[:len(ex)//2]
     print(ex)
     # print(next(iter(ds)))
+# %%

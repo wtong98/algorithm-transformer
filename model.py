@@ -41,7 +41,9 @@ import optax
 
 from tqdm import tqdm
 
-from task.string_copy import *
+from task.string_copy_enc import *
+
+def new_seed(): return np.random.randint(1, np.iinfo(np.int32).max)
 
 @struct.dataclass
 class TransformerConfig:
@@ -336,10 +338,10 @@ class Transformer(nn.Module):
             rand_idxs = jnp.sort(rand_idxs)
             rand_idxs = jnp.concatenate((jnp.zeros(1,), rand_idxs)).astype(int)
         
-        decoder_mask = None
+        decoder_mask = nn.make_attention_mask(inputs > 0, inputs > 0)
         if config.causal:
             decoder_mask = nn.combine_masks(
-                nn.make_attention_mask(inputs > 0, inputs > 0),
+                decoder_mask,
                 nn.make_causal_mask(inputs))
 
         # Target-Input Decoder
@@ -457,8 +459,8 @@ def print_metric(step, m, is_eval=False):
 
 @functools.partial(jax.jit, static_argnames='config')
 def train_step(state, batch, config, rng=None):
-    train_keys = ['inputs', 'labels', 'mask']
-    inputs, labels, mask = [batch.get(k, None) for k in train_keys]
+    train_keys = ['inputs', 'outputs', 'labels', 'mask']
+    inputs, outputs, labels, mask = [batch.get(k, None) for k in train_keys]
     # print('LABS', labels)
     
     rng = jax.random.fold_in(rng, state.step)
@@ -473,16 +475,24 @@ def train_step(state, batch, config, rng=None):
         )
         
         tok_logits, label_logits = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
-        loss = optax.softmax_cross_entropy_with_integer_labels(
-            tok_logits[...,:-1,:], inputs[..., 1:])
+        targets = outputs
+        curr_mask = mask
+        
+        if config.causal:
+            tok_logits, targets = tok_logits[...,:-1,:], inputs[..., 1:]
+            curr_mask = mask[...,:-1]
+
+        loss = optax.softmax_cross_entropy_with_integer_labels(tok_logits, targets)
         
         if config.max_item_label > 0:
+            assert config.causal, "item-label encoding supported only for causal transformer"
+
             label_loss = optax.softmax_cross_entropy_with_integer_labels(
                 label_logits[...,:-1,:], labels[...,1:]
             )
             loss += label_loss
 
-        loss = loss * mask[...,:-1]
+        loss = loss * curr_mask
 
         return loss.sum(axis=1).mean(), logits
 
@@ -490,27 +500,31 @@ def train_step(state, batch, config, rng=None):
     (_, logits), grads = grad_fn(state.params)
     new_state = state.apply_gradients(grads=grads)
 
-    metrics = compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
+    targets = outputs if outputs is not None else inputs
+    metrics = compute_metrics(logits, targets, mask, causal=config.causal, vocab_size=config.vocab_size)
     return new_state, metrics
 
 
 @functools.partial(jax.jit, static_argnames='config')
 def eval_step(state, batch, config, rng=None):
-    train_keys = ['inputs', 'labels', 'mask']
-    inputs, labels, mask = [batch.get(k, None) for k in train_keys]
+    train_keys = ['inputs', 'outputs', 'labels', 'mask']
+    inputs, outputs, labels, mask = [batch.get(k, None) for k in train_keys]
 
     logits = Transformer(config).apply({'params': state.params}, inputs, labels=labels, rngs={'rng': rng})
-    return compute_metrics(logits, inputs, mask, vocab_size=config.vocab_size)
+    targets = outputs if outputs is not None else inputs
+    return compute_metrics(logits, targets, mask, causal=config.causal, vocab_size=config.vocab_size)
 
 
 def predict(prompt, params, config, seed=None, use_tqdm=False):
-    if config.max_item_label > 0:
-        return predict_with_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
+    if config.causal:
+        if config.max_item_label > 0:
+            return predict_with_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
+        else:
+            return predict_no_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
     else:
-        return predict_no_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
+        return predict_all(prompt, params, config, seed=seed)
 
 
-# TODO: test
 def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False):
     prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
@@ -553,7 +567,8 @@ def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, seed
     labels = labels.reshape(1, -1)
 
     if seed == None:
-        seed = np.random.randint(1, 99999)
+        seed = new_seed()
+
     rng = jax.random.PRNGKey(seed)
 
     it = range(config.max_len - prompt.shape[1])
@@ -583,28 +598,48 @@ def get_next_with_lab(prompt, labels, params, config, rng=None):
     return prompt, labels
 
 
-def compute_metrics(logits, inputs, mask, vocab_size=None):
+def predict_all(prompt: list, params: dict, config: TransformerConfig, seed=None, raw_prompt=False):
+    if seed == None:
+        seed = new_seed()
+
+    rng = jax.random.PRNGKey(seed)
+    if not raw_prompt:
+        prompt = prompt + [1] * len(prompt)
+
+    prompt = jnp.array(prompt).reshape(1, -1)
+    print('PROMPT', prompt)
+    
+    logits = Transformer(config).apply({'params': params}, prompt, rngs={'rng': rng})
+    out = jnp.argmax(logits, -1).squeeze()
+    return out, {'logits': logits}
+
+
+def compute_metrics(logits, targets, mask, causal=True, vocab_size=None):
     if vocab_size == None:
         vocab_size = logits.shape[-1]
 
-    pred_tok_logits = logits[...,:-1,:vocab_size]
-    pred_inputs = inputs[...,1:]
-    pred_mask = mask[...,:-1]
+    logits = logits[...,:vocab_size]
+    if causal:
+        logits = logits[...,:-1,:]
+        targets = targets[...,1:]
+        mask = mask[...,:-1]
 
-    loss = optax.softmax_cross_entropy_with_integer_labels(pred_tok_logits, pred_inputs)
-    loss = loss * pred_mask
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, targets)
+    loss = loss * mask
     loss = loss.sum(axis=1).mean()
 
-    preds = jnp.argmax(pred_tok_logits, axis=-1)
-    acc = jnp.sum((preds == pred_inputs) * pred_mask) / jnp.sum(pred_mask)
+    preds = jnp.argmax(logits, axis=-1)
+    # print('PREDS', preds)
+    # print('TARG', targets)
+    acc = jnp.sum((preds == targets) * mask) / jnp.sum(mask)
 
-    aon_acc = jnp.sum((preds == pred_inputs) * pred_mask, axis=1) / jnp.sum(pred_mask, axis=1)
+    aon_acc = jnp.sum((preds == targets) * mask, axis=1) / jnp.sum(mask, axis=1)
     aon_acc = jnp.mean(jnp.isclose(aon_acc, 1))
 
-    probs = jax.nn.softmax(pred_tok_logits)[...,pred_inputs]
+    probs = jax.nn.softmax(logits)[...,targets]
     probs = jnp.diagonal(probs, axis1=1, axis2=3)
     probs = jnp.diagonal(probs, axis1=0, axis2=1).T
-    conf = jnp.sum(probs * pred_mask) / jnp.sum(pred_mask)
+    conf = jnp.sum(probs * mask) / jnp.sum(mask)
 
     return {
         'loss': loss,
@@ -656,10 +691,12 @@ max_train_len = 5
 # train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
 #                        max_item_label=max_item_label)
 
+# TODO: rework relative encoding, and ensure not length sensitive <-- STOPPED HERE
 config = TransformerConfig(
-    n_symbols + 3, causal=False, rel_pos_att=True, rel_pos_rand_max=max_item_label*2, max_len=512)
+    n_symbols + 3, causal=False, rel_pos_att=False, max_len=512)
     # n_symbols + 3, max_item_label=max_item_label//2, max_len=512)
-train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
+# train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
+train_ds = CopyEncDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
@@ -700,15 +737,25 @@ print('BEST ITER', best_step)
 r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
+# <codecell>
+b = next(iter(train_dl))
+logits = Transformer(config).apply({'params': raw_state['params']}, b['inputs'])
+compute_metrics(logits, b['outputs'], b['mask'], causal=False)
+b['inputs']
+# logits.argmax(-1)
+# b['outputs']
+
 # %%
-inputs = [4, 3, 3, 4, 3, 3, 1]
+inputs = [3, 4, 4, 3, 3, 3]
 # predict_with_lab(inputs, raw_state['params'], config)
-seq, info = predict(inputs, raw_state['params'], config)
+seq, info = predict_all(inputs, raw_state['params'], config)
 seq
 
 # m = Transformer(config)
 # _, intm = m.apply({'params': raw_state['params']}, jnp.array(inputs).reshape(1, -1), mutable='intermediates', rngs={'rng': jax.random.PRNGKey(5)})
-# intm['intermediates']['Decoder']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['rand_idxs'][0]
+# w = intm['intermediates']['TransformerBlock_0']['SingleHeadSelfAttention_0']['attention_weights'][0]
+# plt.imshow(w.squeeze())
+# w
 
 # <codecell>
 evaluate_acc(11, raw_state['params'], config, max_item_label=max_item_label, n_examples=10)

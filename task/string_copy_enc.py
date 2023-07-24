@@ -9,7 +9,10 @@ from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 
 start_char = 97    # ASCII 97 corresponds to 'a'
 
-from string_copy import CopyDataset
+try:
+    from .string_copy import CopyDataset
+except ImportError:
+    from string_copy import CopyDataset
 
 
 class CopyEncDataset(CopyDataset):
@@ -27,7 +30,7 @@ class CopyEncDataset(CopyDataset):
         pattern = rng.choice(vocab_idxs, size=length)
         pattern_mask = np.ones(len(pattern))
 
-        xs = np.concatenate((pattern, np.zeros(length)))
+        xs = np.concatenate((pattern, np.ones(length)))   # GO == 1
         ys = np.concatenate((pattern, pattern))
         pred_mask = np.concatenate((pattern_mask, pattern_mask))
 
@@ -64,3 +67,4 @@ if __name__ == '__main__':
     # print(ys)
     # print(pad)
     print(next(iter(dl)))
+# %%
