@@ -165,17 +165,22 @@ class RelativePositionAttention(nn.Module):
         content_att = jnp.einsum('bqd,bkd->bqk', query + content_bias, key)
 
         pe = sinusoidal_init(
-            max_len=self.config.max_len,
+            max_len=2 * self.config.max_len,
             squeeze=True)(None, (depth,))
         
         if idxs is not None:
             pe = pe[idxs, :]
         else:
-            pe = pe[:length, :]
+            mid = self.config.max_len
+            upr = mid if config.causal else mid+length
+            pe = pe[(mid-length):upr]
         
         self.sow('intermediates', 'rand_idxs', idxs)
         pe = jnp.broadcast_to(pe, (batch_size,) + pe.shape)
-        pe = jnp.flip(pe)   # relative ordering
+        # if config.causal:
+        #     pe = jnp.flip(pe)   # causal relative ordering
+        
+        self.sow('intermediates', 'pe', pe)
 
         relative_key = nn.Dense(depth, use_bias=False)(pe)
         relative_bias = self.param('relative_bias', self.config.kernel_init(), (1, 1, depth))
@@ -189,6 +194,46 @@ class RelativePositionAttention(nn.Module):
 
 # TODO: cite
 def relative_shift(x: jax.Array):
+
+    def rel_shift_inner(logits: jax.Array) -> jax.Array:
+        """Shifts the relative logits.
+
+        This is a more general than the original Transformer-XL implementation as
+        inputs may also see the future. (The implementation does not rely on a
+        causal mask removing the upper-right triangle.)
+
+        Given attention length 3 and inputs:
+            [[-3, -2, -1, 0, 1, 2],
+            [-3, -2, -1, 0, 1, 2],
+            [-3, -2, -1, 0, 1, 2]]
+
+        The shifted output is:
+            [[0, 1, 2],
+            [-1, 0, 1],
+            [-2, -1, 0]]
+
+        Args:
+            logits: input tensor of shape [T_q, T_v + T_q]
+            attention_length: T_v `int` length of the attention, should be equal to
+            memory size + sequence length.
+
+        Returns:
+            A shifted version of the input of size [T_q, T_v]. In each row, a window of
+            size T_v elements is kept. The window starts at
+            subsequent row.
+        """
+        if logits.ndim != 2:
+            raise ValueError('`logits` needs to be an array of dimension 2.')
+        tq, total_len = logits.shape
+        attention_length = total_len - tq
+
+        logits = jnp.reshape(logits, [total_len, tq])
+        logits = jax.lax.slice(logits, (1, 0), logits.shape)  # logits[1:]
+        logits = jnp.reshape(logits, [tq, total_len - 1])
+        # Equiv to logits[:, :attention_length].
+        logits = jax.lax.slice(logits, (0, 0), (tq, attention_length))
+        return logits
+
     def rel_shift_causal(logits: jax.Array) -> jax.Array:
         """Shifts the relative logits, assuming causal attention.
 
@@ -219,7 +264,13 @@ def relative_shift(x: jax.Array):
 
         return jnp.reshape(x, [t1, t2])
     
-    return jax.vmap(rel_shift_causal)(x)
+    if x.shape[-1] > x.shape[-2]:
+        rel_shift = rel_shift_inner
+    else:
+        assert x.shape[-1] == x.shape[-2]
+        rel_shift = rel_shift_causal
+
+    return jax.vmap(rel_shift)(x)
 
 
 class AddPositionEmbs(nn.Module):
@@ -511,7 +562,7 @@ def eval_step(state, batch, config, rng=None):
     inputs, outputs, labels, mask = [batch.get(k, None) for k in train_keys]
 
     logits = Transformer(config).apply({'params': state.params}, inputs, labels=labels, rngs={'rng': rng})
-    targets = outputs if outputs is not None else inputs
+    targets = inputs if config.causal else outputs
     return compute_metrics(logits, targets, mask, causal=config.causal, vocab_size=config.vocab_size)
 
 
@@ -629,8 +680,6 @@ def compute_metrics(logits, targets, mask, causal=True, vocab_size=None):
     loss = loss.sum(axis=1).mean()
 
     preds = jnp.argmax(logits, axis=-1)
-    # print('PREDS', preds)
-    # print('TARG', targets)
     acc = jnp.sum((preds == targets) * mask) / jnp.sum(mask)
 
     aon_acc = jnp.sum((preds == targets) * mask, axis=1) / jnp.sum(mask, axis=1)
@@ -691,9 +740,8 @@ max_train_len = 5
 # train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
 #                        max_item_label=max_item_label)
 
-# TODO: rework relative encoding, and ensure not length sensitive <-- STOPPED HERE
 config = TransformerConfig(
-    n_symbols + 3, causal=False, rel_pos_att=False, max_len=512)
+    n_symbols + 3, causal=False, rel_pos_att=True, max_len=512)
     # n_symbols + 3, max_item_label=max_item_label//2, max_len=512)
 # train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
 train_ds = CopyEncDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
@@ -737,25 +785,19 @@ print('BEST ITER', best_step)
 r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
-# <codecell>
-b = next(iter(train_dl))
-logits = Transformer(config).apply({'params': raw_state['params']}, b['inputs'])
-compute_metrics(logits, b['outputs'], b['mask'], causal=False)
-b['inputs']
-# logits.argmax(-1)
-# b['outputs']
-
 # %%
-inputs = [3, 4, 4, 3, 3, 3]
+inputs = [3, 4, 4] 
 # predict_with_lab(inputs, raw_state['params'], config)
-seq, info = predict_all(inputs, raw_state['params'], config)
+seq, info = predict(inputs, raw_state['params'], config)
 seq
+
+# info['logits']
 
 # m = Transformer(config)
 # _, intm = m.apply({'params': raw_state['params']}, jnp.array(inputs).reshape(1, -1), mutable='intermediates', rngs={'rng': jax.random.PRNGKey(5)})
-# w = intm['intermediates']['TransformerBlock_0']['SingleHeadSelfAttention_0']['attention_weights'][0]
-# plt.imshow(w.squeeze())
-# w
+# pe = intm['intermediates']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['pe'][0]
+# plt.plot(pe[0,:,0])
+
 
 # <codecell>
 evaluate_acc(11, raw_state['params'], config, max_item_label=max_item_label, n_examples=10)
