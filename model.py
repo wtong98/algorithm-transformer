@@ -24,7 +24,7 @@ limitations under the License.
 import functools
 import os.path
 import shutil
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Optional, Tuple
 
 from flax import linen as nn, struct, traverse_util
 from flax.core.frozen_dict import freeze, FrozenDict
@@ -51,10 +51,10 @@ class TransformerConfig:
     vocab_size: int
     emb_dim: int = 128
     num_heads: int = 1
-    num_layers: int = 3
+    num_layers: int = 6
     qkv_dim: int = 128
     mlp_dim: int = 128
-    max_len: int = 100
+    max_len: int = 512
     causal: bool = True
     kernel_init_name = 'xavier_uniform'
     kernel_init_params: FrozenDict = struct.field(default_factory=FrozenDict)
@@ -168,18 +168,19 @@ class RelativePositionAttention(nn.Module):
             max_len=2 * self.config.max_len,
             squeeze=True)(None, (depth,))
         
+        mid = self.config.max_len
         if idxs is not None:
+            if not self.config.causal:
+                left_idxs = -jnp.flip(idxs[1:])
+                idxs = mid + jnp.concatenate((jnp.empty((1,)), left_idxs, idxs))
+                idxs = idxs.astype(jnp.int32)
             pe = pe[idxs, :]
+            self.sow('intermediates', 'rand_idxs', idxs)
         else:
-            mid = self.config.max_len
-            upr = mid if config.causal else mid+length
+            upr = mid if self.config.causal else mid+length
             pe = pe[(mid-length):upr]
         
-        self.sow('intermediates', 'rand_idxs', idxs)
         pe = jnp.broadcast_to(pe, (batch_size,) + pe.shape)
-        # if config.causal:
-        #     pe = jnp.flip(pe)   # causal relative ordering
-        
         self.sow('intermediates', 'pe', pe)
 
         relative_key = nn.Dense(depth, use_bias=False)(pe)
@@ -188,7 +189,7 @@ class RelativePositionAttention(nn.Module):
 
         relative_att = relative_shift(relative_att)
 
-        assert content_att.shape == relative_att.shape
+        assert content_att.shape == relative_att.shape, f'got shapes {content_att.shape} and {relative_att.shape}'
         return content_att + relative_att
 
 
@@ -472,8 +473,15 @@ def train(config: TransformerConfig, train_dl, eval_dl=None, eval_iters=1_000, l
 
     for i in range(n_iters):
         batch = next(train_iter)
-        state, metrics = train_step(state, batch, config, rng=model_rng)
-        train_metrics.append(metrics)
+
+        report_metrics = False
+        if i % print_every == 0 or i == (n_iters - 1):
+            report_metrics = True
+
+        state, metrics = train_step(state, batch, config, rng=model_rng, report_metrics=report_metrics)
+
+        if metrics != None:
+            train_metrics.append(metrics)
 
         if i % print_every == 0 or i == (n_iters-1):
             if eval_dl != None:
@@ -508,8 +516,8 @@ def print_metric(step, m, is_eval=False):
     print(f'{prefix} step {step}: loss: {m["loss"]:.4f}  acc: {m["accuracy"]:.4f}  aon: {m["aon_accuracy"]:.4f}  conf: {m["confidence"]:.4f}')
 
 
-@functools.partial(jax.jit, static_argnames='config')
-def train_step(state, batch, config, rng=None):
+@functools.partial(jax.jit, static_argnames=('config', 'report_metrics'))
+def train_step(state, batch, config, rng=None, report_metrics=False):
     train_keys = ['inputs', 'outputs', 'labels', 'mask']
     inputs, outputs, labels, mask = [batch.get(k, None) for k in train_keys]
     # print('LABS', labels)
@@ -552,7 +560,11 @@ def train_step(state, batch, config, rng=None):
     new_state = state.apply_gradients(grads=grads)
 
     targets = outputs if outputs is not None else inputs
-    metrics = compute_metrics(logits, targets, mask, causal=config.causal, vocab_size=config.vocab_size)
+
+    metrics = None
+    if report_metrics:
+        metrics = compute_metrics(logits, targets, mask, causal=config.causal, vocab_size=config.vocab_size)
+
     return new_state, metrics
 
 
@@ -566,8 +578,11 @@ def eval_step(state, batch, config, rng=None):
     return compute_metrics(logits, targets, mask, causal=config.causal, vocab_size=config.vocab_size)
 
 
-def predict(prompt, params, config, seed=None, use_tqdm=False):
+def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = None, use_tqdm: bool = False) -> Tuple[jax.Array, dict]:
     if config.causal:
+        if prompt[-1] != 1:
+            prompt.append(-1)
+
         if config.max_item_label > 0:
             return predict_with_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
         else:
@@ -658,7 +673,7 @@ def predict_all(prompt: list, params: dict, config: TransformerConfig, seed=None
         prompt = prompt + [1] * len(prompt)
 
     prompt = jnp.array(prompt).reshape(1, -1)
-    print('PROMPT', prompt)
+    # print('PROMPT', prompt)
     
     logits = Transformer(config).apply({'params': params}, prompt, rngs={'rng': rng})
     out = jnp.argmax(logits, -1).squeeze()
@@ -729,7 +744,7 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
     return n_correct / n_examples, fails
 # <codecell>
-# '''
+'''
 n_symbols = 2
 max_item_label = 25
 max_train_len = 5
@@ -741,17 +756,17 @@ max_train_len = 5
 #                        max_item_label=max_item_label)
 
 config = TransformerConfig(
-    n_symbols + 3, causal=False, rel_pos_att=True, max_len=512)
+    n_symbols + 3, causal=False, rel_pos_att=True, rel_pos_rand_max=max_item_label * 2, max_len=512)
     # n_symbols + 3, max_item_label=max_item_label//2, max_len=512)
 # train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
-train_ds = CopyEncDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
+train_ds = CopyEncDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=5_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=20_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
@@ -786,17 +801,19 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [3, 4, 4] 
+inputs = [3, 4, 4, 3, 4, 4] 
 # predict_with_lab(inputs, raw_state['params'], config)
-seq, info = predict(inputs, raw_state['params'], config)
+seq, info = predict_all(inputs, raw_state['params'], config, raw_prompt=False)
 seq
 
 # info['logits']
 
 # m = Transformer(config)
 # _, intm = m.apply({'params': raw_state['params']}, jnp.array(inputs).reshape(1, -1), mutable='intermediates', rngs={'rng': jax.random.PRNGKey(5)})
-# pe = intm['intermediates']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['pe'][0]
-# plt.plot(pe[0,:,0])
+# idxs = intm['intermediates']['TransformerBlock_0']['SingleHeadSelfAttention_0']['RelativePositionAttention_0']['rand_idxs'][0] - 512
+
+# idxs = jnp.broadcast_to(idxs, (1, 5, 10))
+# relative_shift(idxs)
 
 
 # <codecell>

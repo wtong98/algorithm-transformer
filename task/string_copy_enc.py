@@ -30,7 +30,7 @@ class CopyEncDataset(CopyDataset):
         pattern = rng.choice(vocab_idxs, size=length)
         pattern_mask = np.ones(len(pattern))
 
-        xs = np.concatenate((pattern, np.ones(length)))   # GO == 1
+        xs = np.concatenate((pattern, np.ones(length))).astype('int')   # GO == 1
         ys = np.concatenate((pattern, pattern))
         pred_mask = np.concatenate((pattern_mask, pattern_mask))
 
