@@ -41,7 +41,7 @@ import optax
 
 from tqdm import tqdm
 
-from task.string_copy_enc import *
+from task.string_copy import *
 
 def new_seed(): return np.random.randint(1, np.iinfo(np.int32).max)
 
@@ -54,7 +54,7 @@ class TransformerConfig:
     num_layers: int = 6
     qkv_dim: int = 128
     mlp_dim: int = 128
-    max_len: int = 512
+    max_len: int = 256
     causal: bool = True
     kernel_init_name = 'xavier_uniform'
     kernel_init_params: FrozenDict = struct.field(default_factory=FrozenDict)
@@ -591,7 +591,7 @@ def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = N
         return predict_all(prompt, params, config, seed=seed)
 
 
-def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False):
+def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, max_len=50):
     prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
@@ -600,7 +600,7 @@ def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False):
         seed = np.random.randint(1, 99999)
     rng = jax.random.PRNGKey(seed)
 
-    it = range(config.max_len - prompt.shape[1])
+    it = range(max_len)
     if use_tqdm:
         it = tqdm(it)
 
@@ -715,7 +715,7 @@ def compute_metrics(logits, targets, mask, causal=True, vocab_size=None):
 
 def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examples=100, use_tqdm=False):
     train_ds = CopyDataset(length, vocab_size=n_symbols,
-                           max_item_label=max_item_label)
+                           max_item_label=max_item_label, bos=True)
 
     n_correct = 0
     fails = []
@@ -726,7 +726,7 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
     for _, example in it:
         ans = example[0]
-        prompt = ans[:len(ans)//2]
+        prompt = ans[:len(ans)//2+1].astype('int')
         try:
             pred = predict(prompt, params, config)
         except Exception as e:
@@ -745,9 +745,9 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
     return n_correct / n_examples, fails
 # <codecell>
 '''
-n_symbols = 2
-max_item_label = 25
-max_train_len = 5
+n_symbols = 96
+max_item_label = -1
+max_train_len = 4
 
 
 # config = TransformerConfig(
@@ -755,18 +755,22 @@ max_train_len = 5
 # train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
 #                        max_item_label=max_item_label)
 
-config = TransformerConfig(
-    n_symbols + 3, causal=False, rel_pos_att=True, rel_pos_rand_max=max_item_label * 2, max_len=512)
-    # n_symbols + 3, max_item_label=max_item_label//2, max_len=512)
-# train_ds = CopyDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label//2)
-train_ds = CopyEncDataset(range(1, max_train_len+1), vocab_size=n_symbols, max_item_label=max_item_label)
+# TODO: experiment with potentially learning relative embeddings
+    # n_symbols + 3, max_item_label=max_item_label)
+train_ds = CopyDataset(range(1, max_train_len+1), 
+    bos=True, prob_type='zipf', ordered=True, unique=True,
+    vocab_size=n_symbols, max_item_label=max_item_label)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
 
+config = TransformerConfig(
+    # n_symbols + 3, rel_pos_att=True, rel_pos_rand_max=max_item_label * 2, max_len=512)
+    train_ds.n_symbols, nope_embeding=True)
+
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=20_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=50_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
@@ -801,9 +805,9 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [3, 4, 4, 3, 4, 4] 
+inputs = [3, 4, 5, 6, 8, 19, 25, 1] 
 # predict_with_lab(inputs, raw_state['params'], config)
-seq, info = predict_all(inputs, raw_state['params'], config, raw_prompt=False)
+seq, info = predict(inputs, raw_state['params'], config)
 seq
 
 # info['logits']
@@ -817,7 +821,7 @@ seq
 
 
 # <codecell>
-evaluate_acc(11, raw_state['params'], config, max_item_label=max_item_label, n_examples=10)
+evaluate_acc(6, raw_state['params'], config, n_symbols=n_symbols, n_examples=10)
 
 # %%
 
@@ -830,7 +834,7 @@ def get_attn_weights(seq, params, config, labels=None):
         m = Transformer(config)
         _, intm = m.apply({'params': params}, seq.reshape(
             1, -1), labels=labels, mutable='intermediates')
-        attn_weights = intm['intermediates']['Decoder'][f'TransformerBlock_{i}'][
+        attn_weights = intm['intermediates'][f'TransformerBlock_{i}'][
             'SingleHeadSelfAttention_0']['attention_weights'][0]
         all_weights.append(attn_weights.squeeze())
 
@@ -861,6 +865,7 @@ def plot_attn_weights(attn_weights, seq, idx_to_tok):
 
 def plot_sequence(in_seq, params, config):
     seq, labs = predict(jnp.array(in_seq), params, config)
+    labs = None
     # seq = jnp.array([3,3,4,3,4,1,3,3,4,3,4])
     seq = seq[:(len(in_seq)*2)]
     print('SEQ', seq)
@@ -870,7 +875,7 @@ def plot_sequence(in_seq, params, config):
 
 # plot_sequence([3,3,4,3,4,4,4,3,3,4,3,4,3,3,4,3,3,4,1], raw_state['params'], pred_config)
 plot_sequence(inputs, raw_state['params'], config)
-# plt.savefig('fig/fix_sinus_attn_15.png')
+plt.savefig('scratch/fig/tmp_att.png')
 
 # %%
 '''

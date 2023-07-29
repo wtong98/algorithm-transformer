@@ -11,10 +11,15 @@ start_char = 97    # ASCII 97 corresponds to 'a'
 
 
 class CopyDataset(IterableDataset):
-    def __init__(self, lengths, probs=None, vocab_size=2, weight_prop=False, max_item_label=-1) -> None:
+    def __init__(self, lengths, 
+                 probs=None, prob_type=None, 
+                 vocab_size=2, max_item_label=-1, bos=False,
+                 unique=False, ordered=False) -> None:
         self.vocab_size = vocab_size
-        self.weight_prop = weight_prop
         self.max_item_label = max_item_label
+        self.bos = bos
+        self.unique = unique
+        self.ordered = ordered
 
         try:
             self.lengths = list(lengths)
@@ -22,17 +27,23 @@ class CopyDataset(IterableDataset):
             self.lengths = [lengths]
 
         self.probs = probs
-        if self.probs == None and self.weight_prop:
-            weights = np.array(self.lengths)
-            self.probs = weights / np.sum(weights)
+        if self.probs is None:
+            if prob_type == 'zipf':
+                weights = 1 / np.array(self.lengths)
+                self.probs = weights / np.sum(weights)
+            elif prob_type == 'inv_zipf':
+                weights = np.array(self.lengths)
+                self.probs = weights / np.sum(weights)
 
         self.vocab_toks = [chr(start_char + i) for i in range(vocab_size)]
         self.idx_to_tok = [
             'PAD',
             'GO',
             'END',
+            'START'
         ] + self.vocab_toks
         self.tok_to_idx = {val:i for i, val in enumerate(self.idx_to_tok)}
+        self.n_symbols = len(self.idx_to_tok)
 
         self.seed = None
         worker_info = get_worker_info()
@@ -47,10 +58,21 @@ class CopyDataset(IterableDataset):
         vocab_idxs = [self.tok_to_idx[tok] for tok in self.vocab_toks]
         length = rng.choice(self.lengths, p=self.probs)
 
-        pattern = rng.choice(vocab_idxs, size=length)
+        pattern = rng.choice(vocab_idxs, size=length, replace=self.unique)
+        if self.ordered:
+            pattern = np.sort(pattern)
+
         pattern_mask = np.ones(len(pattern))
-        xs = np.concatenate((pattern, [self.tok_to_idx['GO']], pattern, [self.tok_to_idx['END']]))
+        xs = np.concatenate((
+            [self.tok_to_idx['START']] if self.bos else [], 
+            pattern, 
+            [self.tok_to_idx['GO']], 
+            pattern, 
+            [self.tok_to_idx['END']]
+        ))
+
         pred_mask = np.concatenate((
+            [0] if self.bos else [],
             0 * pattern_mask,  # ignore prefix
             [1],               # start tracking at GO
             pattern_mask,      # predict output
@@ -92,9 +114,9 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    ds = CopyDataset([1,3], weight_prop=True, max_item_label=-1)
+    ds = CopyDataset([1,2,3], vocab_size=10, prob_type='zipf', max_item_label=-1, bos=True)
     dl = to_dataloader(ds, batch_size=8)
-    ex = next(iter(ds))[0]
+    ex = next(iter(dl))
     # ex = ex[:len(ex)//2]
     print(ex)
     # print(next(iter(ds)))
