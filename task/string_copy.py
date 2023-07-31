@@ -58,7 +58,7 @@ class CopyDataset(IterableDataset):
         vocab_idxs = [self.tok_to_idx[tok] for tok in self.vocab_toks]
         length = rng.choice(self.lengths, p=self.probs)
 
-        pattern = rng.choice(vocab_idxs, size=length, replace=self.unique)
+        pattern = rng.choice(vocab_idxs, size=length, replace=not self.unique)
         if self.ordered:
             pattern = np.sort(pattern)
 
@@ -81,7 +81,7 @@ class CopyDataset(IterableDataset):
 
         if self.max_item_label > 0:
             item_labels = np.sort(rng.choice(np.arange(1, self.max_item_label + 1), size=length, replace=False))
-            item_labels = np.concatenate((item_labels, [0], item_labels))  # reflect copy operation
+            item_labels = np.concatenate(([0] if self.bos else [], item_labels, [0], item_labels))  # reflect copy operation
         else:
             item_labels = np.zeros(length)
 

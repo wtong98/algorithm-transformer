@@ -626,8 +626,8 @@ def get_next(prompt, params, config, rng=None):
 def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, seed=None, use_tqdm=False):
     prompt = jnp.array(prompt)
     assert len(prompt.shape) == 1
-    labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 1, replace=False))
-    labels = np.append(labels, [0])
+    labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 2, replace=False))
+    labels = np.concatenate(([0], labels, [0])) # TODO: move bos and other ds params to config
 
     prompt = prompt.reshape(1, -1)
     labels = labels.reshape(1, -1)
@@ -745,8 +745,8 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
     return n_correct / n_examples, fails
 # <codecell>
 '''
-n_symbols = 96
-max_item_label = -1
+n_symbols = 2
+max_item_label = 50
 max_train_len = 4
 
 
@@ -758,7 +758,7 @@ max_train_len = 4
 # TODO: experiment with potentially learning relative embeddings
     # n_symbols + 3, max_item_label=max_item_label)
 train_ds = CopyDataset(range(1, max_train_len+1), 
-    bos=True, prob_type='zipf', ordered=True, unique=True,
+    bos=True, prob_type='zipf', ordered=False, unique=False,
     vocab_size=n_symbols, max_item_label=max_item_label)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
@@ -766,7 +766,7 @@ train_dl = to_dataloader(train_ds, batch_size=32,
 
 config = TransformerConfig(
     # n_symbols + 3, rel_pos_att=True, rel_pos_rand_max=max_item_label * 2, max_len=512)
-    train_ds.n_symbols, nope_embeding=True)
+    train_ds.n_symbols, max_item_label=max_item_label)
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
@@ -805,7 +805,7 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [3, 4, 5, 6, 8, 19, 25, 1] 
+inputs = [3, 4, 5, 5, 5, 5, 4, 1] 
 # predict_with_lab(inputs, raw_state['params'], config)
 seq, info = predict(inputs, raw_state['params'], config)
 seq

@@ -5,6 +5,7 @@ author: William Tong (wtong@g.harvard.edu)
 """
 
 # <codecell>
+from pathlib import Path
 import pickle
 from dataclasses import dataclass, field
 
@@ -69,8 +70,8 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 n_iters = 3
 n_symbols = 50
 test_every = 1
-max_test_len = 20
-max_item_label = 200
+max_test_len = 30
+max_item_label = 50
 
 
 @dataclass
@@ -87,14 +88,32 @@ class Case:
 all_cases = []
 for i in range(n_iters):
     all_cases.extend([
-        Case('Ordered and Unique', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/ord_and_uniq_{i}'),
-        Case('Ordered', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'ordered': True}, save_dir=f'save/ord_{i}'),
-        Case('Unique', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'unique': True}, save_dir=f'save/uniq_{i}'),
-        Case('Neither', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={}, save_dir=f'save/neither_{i}'),
+        Case('Unique (Len 2)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=2, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l2_{i}'),
+        Case('Unique (Len 3)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=3, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l3_{i}'),
+        Case('Unique (Len 4)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=4, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l4_{i}'),
+        Case('Unique (Len 5)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=5, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l5_{i}'),
+        Case('Unique (Len 7)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=7, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l7_{i}'),
+        Case('Unique (Len 10)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=10, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l10_{i}'),
+        Case('Unique (Len 15)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=15, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l15_{i}'),
+
+
+        # Case('Item-Label', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={}, save_dir=f'save/item_label_{i}'),
+        # Case('Ordered and Unique', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/ord_and_uniq_{i}'),
+        # Case('Ordered', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'ordered': True}, save_dir=f'save/ord_{i}'),
+        # Case('Unique', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'unique': True}, save_dir=f'save/uniq_{i}'),
+        # Case('Neither', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={}, save_dir=f'save/neither_{i}'),
 
         # Case('Sinusoid', config=TransformerConfig(
         #     vocab_size=n_symbols + 3), save_dir=f'save/sinusoid_{i}'),
@@ -111,11 +130,15 @@ for i in range(n_iters):
 
 # <codecell>
 for case in all_cases:
+    # if 'Item-Label' not in case.name and Path(case.save_dir).exists():
+    #     print('SKIPPING', case.name)
+    #     continue
+
     print('TRAINING', case.name)
 
     train_ds = CopyDataset(range(1, case.train_len_max+1),
                            prob_type='zipf',
-                           vocab_size=n_symbols, max_item_label=max_item_label, bos=True,
+                           vocab_size=case.config.vocab_size-4, max_item_label=max_item_label, bos=True,
                            **case.ds_kwargs)
     train_dl = to_dataloader(train_ds, batch_size=32,
                              num_workers=0, pin_memory=True)
@@ -135,7 +158,7 @@ for case in all_cases:
     case.res['gen_acc'] = []
     case.res['fails'] = []
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
-        acc, fails = evaluate_acc(ex_len, params, case.config, max_item_label=max_item_label, n_examples=32, n_symbols=n_symbols, ds_kwargs=case.ds_kwargs)
+        acc, fails = evaluate_acc(ex_len, params, case.config, max_item_label=max_item_label, n_examples=32, n_symbols=case.config.vocab_size-4, ds_kwargs=case.ds_kwargs)
         case.res['gen_acc'].append({'len': ex_len, 'acc': acc})
         # case.res['fails'].append({'len': ex_len, 'examples': fails})
 
@@ -147,13 +170,13 @@ params = r['state']['params']
 print('BEST', mngr.best_step())
 
 # evaluate_acc(300, params, config, n_examples=32)
-prompt = [3, 5, 6, 7, 8, 9, 10, 11, 1]
-pred, _ = predict(prompt, params, config)
+prompt = [3, 5, 6, 7, 8, 1]
+pred, _ = predict_with_lab(prompt, params, config)
 correct = np.concatenate((prompt, prompt[1:]))
 print('corr', correct)
 print('pred', pred)
 
-evaluate_acc(3, params, all_cases[0].config, n_symbols=n_symbols, n_examples=5, ds_kwargs=all_cases[0].ds_kwargs)
+# evaluate_acc(3, params, all_cases[0].config, n_symbols=n_symbols, n_examples=5, ds_kwargs=all_cases[0].ds_kwargs)
 
 
 
@@ -187,15 +210,15 @@ for case in all_cases:
 df = pd.concat(all_df)
 
 # <codecell>
-plt.gcf().set_size_inches(12, 2)
+plt.gcf().set_size_inches(24, 3)
 g = sns.barplot(df, x='len', y='acc', hue='name')
 g.legend_.set_title(None)
 sns.move_legend(g, 'lower right')
 
-plt.axvline(4.5, color='red', linestyle='dashed')
+# plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_copy_subsets.png')
+plt.savefig('fig/gen_copy_uniq_len.png')
 
 
 # %%
