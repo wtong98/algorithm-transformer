@@ -13,7 +13,7 @@ start_char = 97    # ASCII 97 corresponds to 'a'
 class CopyDataset(IterableDataset):
     def __init__(self, lengths, 
                  probs=None, prob_type=None, 
-                 vocab_size=2, max_item_label=-1, bos=False,
+                 vocab_size=2, max_item_label=-1, bos=True,
                  unique=False, ordered=False) -> None:
         self.vocab_size = vocab_size
         self.max_item_label = max_item_label

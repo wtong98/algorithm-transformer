@@ -12,7 +12,7 @@ import sys
 sys.path.append('../')
 
 from model import *
-
+0
 config = TransformerConfig(50 + 4, nope_embeding=True)
 
 mngr = make_ckpt_manager('save/copy_subsets/ord_and_uniq_0')
@@ -33,7 +33,15 @@ emb = params['Embed_0']['embedding']
 pca = PCA().fit(emb)
 emb_pca = pca.transform(emb)
 
-plt.plot(np.cumsum(pca.explained_variance_ratio_))
+emb_rand = np.random.randn(*emb.shape)
+pca_rand = PCA().fit(emb_rand)
+
+plt.plot(np.cumsum(pca.explained_variance_ratio_), label='embeddings')
+plt.plot(np.cumsum(pca_rand.explained_variance_ratio_), color='black', alpha=0.7, linestyle='dashed', label='random')
+
+plt.xlabel('PC')
+plt.ylabel('Proportion of variance')
+# plt.savefig('fig/pca_uniq_ord.png')
 
 # <codecell>
 emb_pcs = emb_pca[:,[0 ,2]]
@@ -46,7 +54,7 @@ plt.colorbar(sc)
 
 
 # <codecell>
-voc_emb = emb[4:]
+voc_emb = emb[:]
 voc_dot = np.einsum('ik,jk->ij', voc_emb, voc_emb)
 
 magn = np.sqrt(np.diag(voc_dot).reshape(-1, 1))
@@ -55,11 +63,11 @@ norm = magn @ magn.T
 # plt.imshow(norm)
 
 # idxs = np.sort(np.random.choice(50, size=15, replace=False))
-plt.plot(np.diag(norm))
+# plt.plot(np.diag(norm))
 cos_score = voc_dot / norm
 
-# plt.imshow(cos_score)
-# plt.colorbar()
+plt.imshow(cos_score)
+plt.colorbar()
 
 # <codecell>
 q0 = params['TransformerBlock_0']['SingleHeadSelfAttention_0']['query']['kernel']
@@ -69,19 +77,25 @@ query_emb = voc_emb @ q0
 key_emb = voc_emb @ k0
 
 att_dot = np.einsum('ik,jk->ij', query_emb, key_emb)
-plt.imshow(att_dot)
+plt.imshow(att_dot[:,:])
 plt.colorbar()
+# plt.savefig('fig/dot_layer1_neither.png')
+
+# <codecell>
+# plt.plot(att_dot[1,4:])
+# plt.plot(att_dot[3,4:])
+cmap = matplotlib.colormaps['viridis']
+cs = [cmap(idx) for idx in np.arange(n_comp) / n_comp]
+
+plt.scatter(att_dot[1,4:], att_dot[3,4:], c=cs[4:])
+
+# <codecell>
+pred, _ = predict([3, 5, 10, 15, 20, 25, 30, 40, 50, 1], params, config)
+pred
 
 
 # <codecell>
-jax.tree_map(lambda x: x.shape, params)
-
-
-
-
-
-# <codecell>
-def get_attn_weights(seq, params, config, labels=None):
+def get_attn_weights(seq, params, config, labels=None, intm_name='attention_weights'):
     all_weights = []
     if labels is not None:
         labels = labels.reshape(1, -1)
@@ -91,32 +105,33 @@ def get_attn_weights(seq, params, config, labels=None):
         _, intm = m.apply({'params': params}, seq.reshape(
             1, -1), labels=labels, mutable='intermediates')
         attn_weights = intm['intermediates'][f'TransformerBlock_{i}'][
-            'SingleHeadSelfAttention_0']['attention_weights'][0]
+            'SingleHeadSelfAttention_0'][intm_name][0]
         all_weights.append(attn_weights.squeeze())
 
     all_weights = jnp.stack(all_weights)
     return all_weights
 
 
-def plot_attn_weights(attn_weights, seq, idx_to_tok):
+def plot_attn_weights(attn_weights, seq, idx_to_tok, axs=None):
     n_layers = attn_weights.shape[0]
-    fig, axs = plt.subplots(1, n_layers, figsize=(7 * n_layers, 7))
+    if axs is None:
+        _, axs = plt.subplots(1, n_layers, figsize=(7 * n_layers, 7))
 
     if n_layers == 1:
         axs = [axs]
 
     for i, (attn, ax) in enumerate(zip(attn_weights, axs)):
-        ax.imshow(attn)
+        im = ax.imshow(attn)
+        plt.colorbar(im, ax=ax)
+
         ax.set_xticks(np.arange(len(seq)))
-        ax.set_xticklabels([idx_to_tok[idx] for idx in seq])
+        ax.set_xticklabels([idx_to_tok[idx] if idx in (1,2,3) else idx for idx in seq])
         ax.set_yticks(np.arange(len(seq)))
-        ax.set_yticklabels([idx_to_tok[idx] for idx in seq])
+        ax.set_yticklabels([idx_to_tok[idx] if idx in (1,2,3) else idx for idx in seq])
 
         ax.set_xlabel('Token')
         ax.set_ylabel('Time')
         ax.set_title(f'Layer {i+1}')
-
-    fig.tight_layout()
 
 
 def plot_sequence(in_seq, params, config):
@@ -125,10 +140,23 @@ def plot_sequence(in_seq, params, config):
     # seq = jnp.array([3,3,4,3,4,1,3,3,4,3,4])
     seq = seq[:(len(in_seq)*2)]
     print('SEQ', seq)
+
+    fig, axs = plt.subplots(3, config.num_layers, figsize=(7 * config.num_layers, 21))
+
+    emb = get_attn_weights(seq, params, config, intm_name='inputs')
+    emb_dot = np.einsum('bik,bjk->bij', emb, emb)
+    plot_attn_weights(emb_dot, seq, train_ds.idx_to_tok, axs=axs[0])
+
+    raw_att = get_attn_weights(seq, params, config, intm_name='raw_att')
+    plot_attn_weights(raw_att, seq, train_ds.idx_to_tok, axs=axs[1])
+
     attn_weights = get_attn_weights(seq, params, config, labels=labs)
-    plot_attn_weights(attn_weights, seq, train_ds.idx_to_tok)
+    plot_attn_weights(attn_weights, seq, train_ds.idx_to_tok, axs=axs[2])
+
+    fig.tight_layout()
 
 
 train_ds = CopyDataset(10, vocab_size=50)
-plot_sequence([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 1], params, config)
-plt.savefig('fig/tmp_att.png')
+# plot_sequence([3, 5, 10, 20, 21, 30, 40, 1], params, config)
+plot_sequence([3, 5, 21, 21, 21, 30, 40, 1], params, config)
+plt.savefig('fig/att_neither_dup.png')

@@ -20,9 +20,20 @@ from task.string_copy import *
 
 
 def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examples=100, use_tqdm=False, ds_kwargs=None):
+    if ds_kwargs is None:
+        ds_kwargs = {}
+    
+    default_ds_kwargs = {
+        'vocab_size': n_symbols,
+        'max_item_label': max_item_label,
+        'bos': True
+    }
+
+    for k, v in ds_kwargs.items():
+        default_ds_kwargs[k] = v
+
     ds_class = CopyDataset if config.causal else CopyDataset
-    train_ds = ds_class(length, vocab_size=n_symbols,
-                           max_item_label=max_item_label, bos=True, **ds_kwargs)
+    train_ds = ds_class(length, **default_ds_kwargs)
 
     n_correct = 0
     fails = []
@@ -43,7 +54,8 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
     for _, example in it:
         ans = example[0]
-        prompt = ans[:len(ans)//2+1]
+        offset = 1 if train_ds.bos else 0
+        prompt = ans[:len(ans)//2+offset]
 
         try:
             pred = predict(prompt, params, config)
@@ -68,10 +80,10 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
 
 n_iters = 3
-n_symbols = 50
+n_symbols = 2
 test_every = 1
-max_test_len = 30
-max_item_label = 50
+max_test_len = 15
+max_item_label = 25
 
 
 @dataclass
@@ -79,7 +91,7 @@ class Case:
     name: str
     config: TransformerConfig
     save_dir: str
-    train_iters: int = 50_000
+    train_iters: int = 30_000
     res: dict = field(default_factory=dict)
     ds_kwargs: dict = field(default_factory=dict)
     train_len_min: int = 1
@@ -88,20 +100,20 @@ class Case:
 all_cases = []
 for i in range(n_iters):
     all_cases.extend([
-        Case('Unique (Len 2)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=2, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l2_{i}'),
-        Case('Unique (Len 3)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=3, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l3_{i}'),
-        Case('Unique (Len 4)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=4, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l4_{i}'),
-        Case('Unique (Len 5)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=5, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l5_{i}'),
-        Case('Unique (Len 7)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=7, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l7_{i}'),
-        Case('Unique (Len 10)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=10, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l10_{i}'),
-        Case('Unique (Len 15)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True), train_len_max=15, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l15_{i}'),
+        # Case('Unique (Len 2)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=2, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l2_{i}'),
+        # Case('Unique (Len 3)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=3, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l3_{i}'),
+        # Case('Unique (Len 4)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=4, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l4_{i}'),
+        # Case('Unique (Len 5)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=5, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l5_{i}'),
+        # Case('Unique (Len 7)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=7, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l7_{i}'),
+        # Case('Unique (Len 10)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=10, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l10_{i}'),
+        # Case('Unique (Len 15)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=15, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l15_{i}'),
 
 
         # Case('Item-Label', config=TransformerConfig(
@@ -115,30 +127,42 @@ for i in range(n_iters):
         # Case('Neither', config=TransformerConfig(
         #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={}, save_dir=f'save/neither_{i}'),
 
+        # Case('NoPE', config=TransformerConfig(
+        #     vocab_size=n_symbols + 4, nope_embeding=True), save_dir=f'save/nope_{i}', ds_kwargs={'unique': True, 'ordered': True}),
         # Case('Sinusoid', config=TransformerConfig(
-        #     vocab_size=n_symbols + 3), save_dir=f'save/sinusoid_{i}'),
+        #     vocab_size=n_symbols + 4), save_dir=f'save/sinusoid_{i}', ds_kwargs={'unique': True, 'ordered': True}),
+        # Case('Relative', config=TransformerConfig(
+        #     vocab_size=n_symbols + 4, rel_pos_att=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative_{i}'),
+        # Case('Random (Relative)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative-rand_{i}'),
+        
+
+        Case('NoPE', config=TransformerConfig(
+            vocab_size=n_symbols + 4, nope_embeding=True), save_dir=f'save/nope_{i}', ds_kwargs={}),
+        Case('Sinusoid', config=TransformerConfig(
+            vocab_size=n_symbols + 4), save_dir=f'save/sinusoid_{i}', ds_kwargs={}),
         # Case('Sinusoid (Item-Label)', config=TransformerConfig(
         #     vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
         # ), save_dir=f'save/item-label-fixed_{i}'),
-        # Case('Relative', config=TransformerConfig(
-        #     vocab_size=n_symbols + 3, rel_pos_att=True), save_dir=f'save/relative_{i}'),
+        Case('Relative', config=TransformerConfig(
+            vocab_size=n_symbols + 4, rel_pos_att=True), ds_kwargs={}, save_dir=f'save/relative_{i}'),
         # Case('Random (Relative)', config=TransformerConfig(
-        #     vocab_size=n_symbols +3, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
-        # Case('Random (Item-Label)', config=TransformerConfig(
-        #     vocab_size=n_symbols +3, max_item_label=max_item_label), save_dir=f'save/item-label_{i}'),
+        #     vocab_size=n_symbols +4, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative-rand_{i}'),
+        Case('Random (Item-Label)', config=TransformerConfig(
+            vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={'bos': False}, save_dir=f'save/item-label_{i}'),
     ])
 
 # <codecell>
 for case in all_cases:
-    # if 'Item-Label' not in case.name and Path(case.save_dir).exists():
-    #     print('SKIPPING', case.name)
-    #     continue
+    if 'Item-Label' not in case.name and Path(case.save_dir).exists():
+        print('SKIPPING', case.name)
+        continue
 
     print('TRAINING', case.name)
 
     train_ds = CopyDataset(range(1, case.train_len_max+1),
                            prob_type='zipf',
-                           vocab_size=case.config.vocab_size-4, max_item_label=max_item_label, bos=True,
+                           vocab_size=case.config.vocab_size-4, max_item_label=max_item_label,
                            **case.ds_kwargs)
     train_dl = to_dataloader(train_ds, batch_size=32,
                              num_workers=0, pin_memory=True)
@@ -163,47 +187,38 @@ for case in all_cases:
         # case.res['fails'].append({'len': ex_len, 'examples': fails})
 
 # <codecell>
-mngr = make_ckpt_manager(all_cases[0].save_dir)
-config = all_cases[0].config
+mngr = make_ckpt_manager(all_cases[3].save_dir)
+config = all_cases[3].config
 r = mngr.restore(mngr.best_step())
 params = r['state']['params']
 print('BEST', mngr.best_step())
 
 # evaluate_acc(300, params, config, n_examples=32)
-prompt = [3, 5, 6, 7, 8, 1]
-pred, _ = predict_with_lab(prompt, params, config)
+prompt = [5, 4, 5, 5, 5, 5, 1]
+pred, labs = predict(prompt, params, config)
 correct = np.concatenate((prompt, prompt[1:]))
-print('corr', correct)
+# print('corr', correct)
 print('pred', pred)
+print('labs', labs)
 
-# evaluate_acc(3, params, all_cases[0].config, n_symbols=n_symbols, n_examples=5, ds_kwargs=all_cases[0].ds_kwargs)
+evaluate_acc(8, params, config, n_symbols=n_symbols, n_examples=5, ds_kwargs=all_cases[3].ds_kwargs)
 
 
 
 # <codecell>
-# TODO: remove non-serializable fields (stop gap)
-# for case in all_cases:
-#     case.config = case.config.replace(
-#         kernel_init=None,
-#         bias_init=None
-#     )
-
 with open('save/cases.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
-# for case in all_cases:
-#     case.config = case.config.replace(
-#         kernel_init=nn.initializers.xavier_uniform(),
-#         bias_init=nn.initializers.normal(stddev=1e-6)
-#     )
-
 # <codecell>
 with open('save/cases.pkl', 'rb') as fp:
-    c = pickle.load(fp)
-c
+    all_cases = pickle.load(fp)
+
 # <codecell>
 all_df = []
 for case in all_cases:
+    if 'Item-Label' in case.name:
+        continue
+
     curr_df = pd.DataFrame(case.res['gen_acc'])
     curr_df['name'] = case.name
     all_df.append(curr_df)
@@ -213,12 +228,12 @@ df = pd.concat(all_df)
 plt.gcf().set_size_inches(24, 3)
 g = sns.barplot(df, x='len', y='acc', hue='name')
 g.legend_.set_title(None)
-sns.move_legend(g, 'lower right')
+sns.move_legend(g, 'upper right')
 
-# plt.axvline(4.5, color='red', linestyle='dashed')
+plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_copy_uniq_len.png')
+plt.savefig('fig/gen_all_3.png')
 
 
 # %%

@@ -131,6 +131,7 @@ class SingleHeadSelfAttention(nn.Module):
             bias_init=self.config.bias_init(),
             use_bias=use_bias)
         
+        self.sow('intermediates', 'inputs', inputs)
         query = dense(name='query')(inputs)
         key = dense(name='key')(inputs)
         value = dense(name='value')(inputs)
@@ -142,6 +143,7 @@ class SingleHeadSelfAttention(nn.Module):
             attn_weights = jnp.einsum('...qd,...kd->...qk', query, key)
 
         attn_weights /= jnp.sqrt(depth)
+        self.sow('intermediates', 'raw_att', attn_weights)
 
         if mask is not None:
             attn_weights = jnp.where(mask.squeeze(), attn_weights, np.iinfo(np.int32).min)
@@ -581,6 +583,7 @@ def eval_step(state, batch, config, rng=None):
 def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = None, use_tqdm: bool = False) -> Tuple[jax.Array, dict]:
     if config.causal:
         if prompt[-1] != 1:
+            prompt = list(prompt)
             prompt.append(-1)
 
         if config.max_item_label > 0:
@@ -592,7 +595,7 @@ def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = N
 
 
 def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, max_len=50):
-    prompt = jnp.array(prompt)
+    prompt = jnp.array(prompt).astype(jnp.int32)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
 
@@ -624,10 +627,15 @@ def get_next(prompt, params, config, rng=None):
 
 
 def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, seed=None, use_tqdm=False):
-    prompt = jnp.array(prompt)
+    prompt = jnp.array(prompt).astype(jnp.int32)
     assert len(prompt.shape) == 1
-    labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 2, replace=False))
-    labels = np.concatenate(([0], labels, [0])) # TODO: move bos and other ds params to config
+
+    if prompt[0] == 3:   # START token
+        labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 2, replace=False))
+        labels = np.concatenate(([0], labels, [0])) # TODO: move bos and other ds params to config
+    else:
+        labels = np.sort(np.random.choice(np.arange(1, config.max_item_label + 1), size=len(prompt) - 1, replace=False))
+        labels = np.concatenate((labels, [0]))
 
     prompt = prompt.reshape(1, -1)
     labels = labels.reshape(1, -1)
@@ -726,7 +734,8 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
     for _, example in it:
         ans = example[0]
-        prompt = ans[:len(ans)//2+1].astype('int')
+        offset = 1 if train_ds.bos else 0
+        prompt = ans[:len(ans)//2+offset].astype('int')
         try:
             pred = predict(prompt, params, config)
         except Exception as e:
@@ -746,8 +755,8 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 # <codecell>
 '''
 n_symbols = 2
-max_item_label = 50
-max_train_len = 4
+max_item_label = 25
+max_train_len = 5
 
 
 # config = TransformerConfig(
@@ -758,7 +767,7 @@ max_train_len = 4
 # TODO: experiment with potentially learning relative embeddings
     # n_symbols + 3, max_item_label=max_item_label)
 train_ds = CopyDataset(range(1, max_train_len+1), 
-    bos=True, prob_type='zipf', ordered=False, unique=False,
+    bos=False, prob_type='zipf', ordered=False, unique=False,
     vocab_size=n_symbols, max_item_label=max_item_label)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
@@ -770,7 +779,7 @@ config = TransformerConfig(
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=50_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=10_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
