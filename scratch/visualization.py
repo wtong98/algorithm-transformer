@@ -12,10 +12,9 @@ import sys
 sys.path.append('../')
 
 from model import *
-0
-config = TransformerConfig(50 + 4, nope_embeding=True)
+config = TransformerConfig(25 + 4, nope_embeding=True, num_layers=1)
 
-mngr = make_ckpt_manager('save/copy_subsets/ord_and_uniq_0')
+mngr = make_ckpt_manager('save/copy_oau_layers_25/oau_1l_0')
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
@@ -72,6 +71,8 @@ plt.colorbar()
 # <codecell>
 q0 = params['TransformerBlock_0']['SingleHeadSelfAttention_0']['query']['kernel']
 k0 = params['TransformerBlock_0']['SingleHeadSelfAttention_0']['key']['kernel']
+# q0 = np.eye(q0.shape[0])
+# k0 = np.eye(k0.shape[0])
 
 query_emb = voc_emb @ q0
 key_emb = voc_emb @ k0
@@ -90,7 +91,7 @@ cs = [cmap(idx) for idx in np.arange(n_comp) / n_comp]
 plt.scatter(att_dot[1,4:], att_dot[3,4:], c=cs[4:])
 
 # <codecell>
-pred, _ = predict([3, 5, 10, 15, 20, 25, 30, 40, 50, 1], params, config)
+pred, _ = predict([3, 4, 5, 6, 7, 8, 9, 10, 1], params, config)
 pred
 
 
@@ -158,5 +159,6 @@ def plot_sequence(in_seq, params, config):
 
 train_ds = CopyDataset(10, vocab_size=50)
 # plot_sequence([3, 5, 10, 20, 21, 30, 40, 1], params, config)
-plot_sequence([3, 5, 21, 21, 21, 30, 40, 1], params, config)
-plt.savefig('fig/att_neither_dup.png')
+plot_sequence([3, 4, 5, 6, 7, 8, 9, 10, 1], params, config)
+plt.savefig('fig/att_oau_1l.png')
+# %%

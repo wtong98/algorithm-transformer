@@ -49,10 +49,8 @@ def new_seed(): return np.random.randint(1, np.iinfo(np.int32).max)
 class TransformerConfig:
     """Global hyperparameters used to minimize obnoxious kwarg plumbing."""
     vocab_size: int
-    emb_dim: int = 128
-    num_heads: int = 1
     num_layers: int = 6
-    qkv_dim: int = 128
+    emb_dim: int = 128
     mlp_dim: int = 128
     max_len: int = 256
     causal: bool = True
@@ -62,13 +60,12 @@ class TransformerConfig:
     bias_init_params: FrozenDict = struct.field(default_factory=lambda: FrozenDict({'stddev': 1e-6}))
     posemb_init: Optional[Callable] = None
     posemb_scramble: bool = False
-    max_item_label: int = -1  # TODO: unify with max_len
+    max_item_label: int = -1
     freeze_embedding: bool = False
     sinus_embedding: bool = False
     nope_embeding: bool = False
     rel_pos_att: bool = False
     rel_pos_rand_max: int = 0
-
 
     def kernel_init(self):
         init_f = getattr(nn.initializers, self.kernel_init_name)
@@ -126,7 +123,7 @@ class SingleHeadSelfAttention(nn.Module):
     def __call__(self, inputs, mask=None, idxs=None, use_bias=False):
         dense = functools.partial(
             nn.Dense,
-            features=self.config.qkv_dim,
+            features=self.config.emb_dim,
             kernel_init=self.config.kernel_init(),
             bias_init=self.config.bias_init(),
             use_bias=use_bias)
@@ -447,12 +444,11 @@ def train(config: TransformerConfig, train_dl, eval_dl=None, eval_iters=1_000, l
     model = Transformer(config)
 
     init_var = jax.jit(model.init)({'rng': global_rng, 'params': params_rng}, jnp.ones(input_shape, jnp.int32), labels=jnp.ones(input_shape, jnp.int32))
-
     opt = optax.adamw(lr)
 
     if config.freeze_embedding:
         partition = freeze(traverse_util.path_aware_map(
-            lambda path, _: 'frozen' if 'AddLabelItemEmbs_0' in path else 'trainable', init_var['params']
+            lambda path, _: 'frozen' if 'Embed_0' in path else 'trainable', init_var['params']
         ))
 
         print('FREEZING', partition)
@@ -754,20 +750,13 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
     return n_correct / n_examples, fails
 # <codecell>
 '''
-n_symbols = 2
+n_symbols = 25
 max_item_label = 25
 max_train_len = 5
 
 
-# config = TransformerConfig(
-#     n_symbols + 3, max_item_label=max_item_label)
-# train_ds = CopyDataset(range(1, 10+1), vocab_size=n_symbols,
-#                        max_item_label=max_item_label)
-
-# TODO: experiment with potentially learning relative embeddings
-    # n_symbols + 3, max_item_label=max_item_label)
 train_ds = CopyDataset(range(1, max_train_len+1), 
-    bos=False, prob_type='zipf', ordered=False, unique=False,
+    bos=True, prob_type='zipf', ordered=True, unique=True,
     vocab_size=n_symbols, max_item_label=max_item_label)
 
 train_dl = to_dataloader(train_ds, batch_size=32,
@@ -775,11 +764,14 @@ train_dl = to_dataloader(train_ds, batch_size=32,
 
 config = TransformerConfig(
     # n_symbols + 3, rel_pos_att=True, rel_pos_rand_max=max_item_label * 2, max_len=512)
-    train_ds.n_symbols, max_item_label=max_item_label)
+    train_ds.n_symbols, 
+    num_layers=2,
+    freeze_embedding=True,
+    nope_embeding=True)
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=10_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=20_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
@@ -814,7 +806,7 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [3, 4, 5, 5, 5, 5, 4, 1] 
+inputs = [3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 1] 
 # predict_with_lab(inputs, raw_state['params'], config)
 seq, info = predict(inputs, raw_state['params'], config)
 seq

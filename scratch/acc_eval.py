@@ -80,10 +80,10 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
 
 n_iters = 3
-n_symbols = 2
+n_symbols = 25
 test_every = 1
-max_test_len = 15
-max_item_label = 25
+max_test_len = 25
+max_item_label = 50
 
 
 @dataclass
@@ -91,29 +91,34 @@ class Case:
     name: str
     config: TransformerConfig
     save_dir: str
-    train_iters: int = 30_000
+    train_iters: int = 20_000
     res: dict = field(default_factory=dict)
     ds_kwargs: dict = field(default_factory=dict)
     train_len_min: int = 1
     train_len_max: int = 5
 
+# TODO: try fixing embeddings and retraining, to see if they're truly random <-- STOPPED HERE
 all_cases = []
 for i in range(n_iters):
     all_cases.extend([
-        # Case('Unique (Len 2)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=2, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l2_{i}'),
-        # Case('Unique (Len 3)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=3, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l3_{i}'),
-        # Case('Unique (Len 4)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=4, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l4_{i}'),
-        # Case('Unique (Len 5)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=5, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l5_{i}'),
-        # Case('Unique (Len 7)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=7, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l7_{i}'),
-        # Case('Unique (Len 10)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=10, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l10_{i}'),
-        # Case('Unique (Len 15)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), train_len_max=15, ds_kwargs={'unique': True}, save_dir=f'save/uniq_l15_{i}'),
+        Case('1 Layer', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_{i}'),
+        Case('1 Layer (frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_fr_{i}'),
+        Case('2 Layer', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_{i}'),
+        Case('2 Layer (frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_fr_{i}'),
+        Case('3 Layer', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_{i}'),
+        Case('3 Layer (frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_fr_{i}'),
+        # Case('4 Layer', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_4l_{i}'),
+        # Case('5 Layer', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_5l_{i}'),
+        # Case('6 Layer', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_6l_{i}'),
 
 
         # Case('Item-Label', config=TransformerConfig(
@@ -137,24 +142,24 @@ for i in range(n_iters):
         #     vocab_size=n_symbols +4, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative-rand_{i}'),
         
 
-        Case('NoPE', config=TransformerConfig(
-            vocab_size=n_symbols + 4, nope_embeding=True), save_dir=f'save/nope_{i}', ds_kwargs={}),
-        Case('Sinusoid', config=TransformerConfig(
-            vocab_size=n_symbols + 4), save_dir=f'save/sinusoid_{i}', ds_kwargs={}),
-        # Case('Sinusoid (Item-Label)', config=TransformerConfig(
-        #     vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
-        # ), save_dir=f'save/item-label-fixed_{i}'),
-        Case('Relative', config=TransformerConfig(
-            vocab_size=n_symbols + 4, rel_pos_att=True), ds_kwargs={}, save_dir=f'save/relative_{i}'),
-        # Case('Random (Relative)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative-rand_{i}'),
-        Case('Random (Item-Label)', config=TransformerConfig(
-            vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={'bos': False}, save_dir=f'save/item-label_{i}'),
+        # Case('NoPE', config=TransformerConfig(
+        #     vocab_size=n_symbols + 4, nope_embeding=True), save_dir=f'save/nope_{i}', ds_kwargs={}),
+        # Case('Sinusoid', config=TransformerConfig(
+        #     vocab_size=n_symbols + 4), save_dir=f'save/sinusoid_{i}', ds_kwargs={}),
+        # # Case('Sinusoid (Item-Label)', config=TransformerConfig(
+        # #     vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
+        # # ), save_dir=f'save/item-label-fixed_{i}'),
+        # Case('Relative', config=TransformerConfig(
+        #     vocab_size=n_symbols + 4, rel_pos_att=True), ds_kwargs={}, save_dir=f'save/relative_{i}'),
+        # # Case('Random (Relative)', config=TransformerConfig(
+        # #     vocab_size=n_symbols +4, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative-rand_{i}'),
+        # Case('Random (Item-Label)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={'bos': False}, save_dir=f'save/item-label_{i}'),
     ])
 
 # <codecell>
 for case in all_cases:
-    if 'Item-Label' not in case.name and Path(case.save_dir).exists():
+    if Path(case.save_dir).exists():
         print('SKIPPING', case.name)
         continue
 
@@ -216,9 +221,6 @@ with open('save/cases.pkl', 'rb') as fp:
 # <codecell>
 all_df = []
 for case in all_cases:
-    if 'Item-Label' in case.name:
-        continue
-
     curr_df = pd.DataFrame(case.res['gen_acc'])
     curr_df['name'] = case.name
     all_df.append(curr_df)
@@ -233,7 +235,7 @@ sns.move_legend(g, 'upper right')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_all_3.png')
+# plt.savefig('fig/gen_oau_rand_init.png')
 
 
 # %%
