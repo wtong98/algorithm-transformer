@@ -5,6 +5,7 @@ author: William Tong (wtong@g.harvard.edu)
 """
 
 # <codecell>
+import os
 from pathlib import Path
 import pickle
 from dataclasses import dataclass, field
@@ -82,6 +83,7 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 n_iters = 3
 n_symbols = 25
 test_every = 1
+n_test_examples = 32
 max_test_len = 25
 max_item_label = 50
 
@@ -91,35 +93,101 @@ class Case:
     name: str
     config: TransformerConfig
     save_dir: str
-    train_iters: int = 20_000
+    train_iters: int = 30_000
     res: dict = field(default_factory=dict)
     ds_kwargs: dict = field(default_factory=dict)
     train_len_min: int = 1
     train_len_max: int = 5
 
-# TODO: try fixing embeddings and retraining, to see if they're truly random <-- STOPPED HERE
+
+save_prefix = ''
+scratch_dir = os.getenv('SCRATCH')
+if scratch_dir is not None:
+    save_prefix = scratch_dir +  '/pehlevan_lab/Lab/wlt/transformer/'
+    prefix_path = Path(save_prefix)
+    if not prefix_path.exists():
+        prefix_path.mkdir(parents=True)
+
+
 all_cases = []
 for i in range(n_iters):
+    print('ITERATION', i)
     all_cases.extend([
-        Case('1 Layer', config=TransformerConfig(
+        Case('1 Layer (ordered and unique)', config=TransformerConfig(
             vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_{i}'),
-        Case('1 Layer (frozen)', config=TransformerConfig(
+        Case('1 Layer (ordered and unique, frozen)', config=TransformerConfig(
             vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_fr_{i}'),
-        Case('2 Layer', config=TransformerConfig(
+        Case('2 Layer (ordered and unique)', config=TransformerConfig(
             vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_{i}'),
-        Case('2 Layer (frozen)', config=TransformerConfig(
+        Case('2 Layer (ordered and unique, frozen)', config=TransformerConfig(
             vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_fr_{i}'),
-        Case('3 Layer', config=TransformerConfig(
+        Case('3 Layer (ordered and unique)', config=TransformerConfig(
             vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_{i}'),
-        Case('3 Layer (frozen)', config=TransformerConfig(
+        Case('3 Layer (ordered and unique, frozen)', config=TransformerConfig(
             vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_fr_{i}'),
-        # Case('4 Layer', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_4l_{i}'),
-        # Case('5 Layer', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_5l_{i}'),
-        # Case('6 Layer', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_6l_{i}'),
+        Case('4 Layer (ordered and unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_4l_{i}'),
+        Case('5 Layer (ordered and unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_5l_{i}'),
+        Case('6 Layer (ordered and unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_6l_{i}'),
+        
+        Case('1 Layer (ordered)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'ordered': True}, save_dir=f'save/o_1l_{i}'),
+        Case('1 Layer (ordered, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={'ordered': True}, save_dir=f'save/o_1l_fr_{i}'),
+        Case('2 Layer (ordered)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'ordered': True}, save_dir=f'save/o_2l_{i}'),
+        Case('2 Layer (ordered, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={'ordered': True}, save_dir=f'save/o_2l_fr_{i}'),
+        Case('3 Layer (ordered)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'ordered': True}, save_dir=f'save/o_3l_{i}'),
+        Case('3 Layer (ordered, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={'ordered': True}, save_dir=f'save/o_3l_fr_{i}'),
+        Case('4 Layer (ordered)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'ordered': True}, save_dir=f'save/o_4l_{i}'),
+        Case('5 Layer (ordered)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'ordered': True}, save_dir=f'save/o_5l_{i}'),
+        Case('6 Layer (ordered)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'ordered': True}, save_dir=f'save/o_6l_{i}'),
 
+        Case('1 Layer (unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True}, save_dir=f'save/u_1l_{i}'),
+        Case('1 Layer (unique, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={'unique': True}, save_dir=f'save/u_1l_fr_{i}'),
+        Case('2 Layer (unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'unique': True}, save_dir=f'save/u_2l_{i}'),
+        Case('2 Layer (unique, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={'unique': True}, save_dir=f'save/u_2l_fr_{i}'),
+        Case('3 Layer (unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'unique': True}, save_dir=f'save/u_3l_{i}'),
+        Case('3 Layer (unique, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={'unique': True}, save_dir=f'save/u_3l_fr_{i}'),
+        Case('4 Layer (unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True}, save_dir=f'save/u_4l_{i}'),
+        Case('5 Layer (unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True}, save_dir=f'save/u_5l_{i}'),
+        Case('6 Layer (unique)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True}, save_dir=f'save/u_6l_{i}'),
+
+        Case('1 Layer (neither)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={}, save_dir=f'save/n_1l_{i}'),
+        Case('1 Layer (neither, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={}, save_dir=f'save/n_1l_fr_{i}'),
+        Case('2 Layer (neither)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={}, save_dir=f'save/n_2l_{i}'),
+        Case('2 Layer (neither, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={}, save_dir=f'save/n_2l_fr_{i}'),
+        Case('3 Layer (neither)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={}, save_dir=f'save/n_3l_{i}'),
+        Case('3 Layer (neither, frozen)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={}, save_dir=f'save/n_3l_fr_{i}'),
+        Case('4 Layer (neither)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={}, save_dir=f'save/n_4l_{i}'),
+        Case('5 Layer (neither)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={}, save_dir=f'save/n_5l_{i}'),
+        Case('6 Layer (neither)', config=TransformerConfig(
+            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={}, save_dir=f'save/n_6l_{i}'),
 
         # Case('Item-Label', config=TransformerConfig(
         #     vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={}, save_dir=f'save/item_label_{i}'),
@@ -157,6 +225,9 @@ for i in range(n_iters):
         #     vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={'bos': False}, save_dir=f'save/item-label_{i}'),
     ])
 
+for case in all_cases:
+    case.save_dir = save_prefix + case.save_dir
+
 # <codecell>
 for case in all_cases:
     if Path(case.save_dir).exists():
@@ -187,9 +258,17 @@ for case in all_cases:
     case.res['gen_acc'] = []
     case.res['fails'] = []
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
-        acc, fails = evaluate_acc(ex_len, params, case.config, max_item_label=max_item_label, n_examples=32, n_symbols=case.config.vocab_size-4, ds_kwargs=case.ds_kwargs)
+        acc, fails = evaluate_acc(ex_len, params, case.config, max_item_label=max_item_label, n_examples=n_test_examples, n_symbols=case.config.vocab_size-4, ds_kwargs=case.ds_kwargs)
         case.res['gen_acc'].append({'len': ex_len, 'acc': acc})
         # case.res['fails'].append({'len': ex_len, 'examples': fails})
+
+# <codecell>
+with open('save/cases.pkl', 'wb') as fp:
+    pickle.dump(all_cases, fp)
+
+if scratch_dir is not None:
+    sys.exit(0)  # terminate now if on cluster
+
 
 # <codecell>
 mngr = make_ckpt_manager(all_cases[3].save_dir)
@@ -208,11 +287,6 @@ print('labs', labs)
 
 evaluate_acc(8, params, config, n_symbols=n_symbols, n_examples=5, ds_kwargs=all_cases[3].ds_kwargs)
 
-
-
-# <codecell>
-with open('save/cases.pkl', 'wb') as fp:
-    pickle.dump(all_cases, fp)
 
 # <codecell>
 with open('save/cases.pkl', 'rb') as fp:
