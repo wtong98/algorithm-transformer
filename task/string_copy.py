@@ -9,31 +9,18 @@ from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 
 start_char = 97    # ASCII 97 corresponds to 'a'
 
-
 class CopyDataset(IterableDataset):
     def __init__(self, lengths, 
                  probs=None, prob_type=None, 
                  vocab_size=2, max_item_label=-1, bos=True,
-                 unique=False, ordered=False) -> None:
-        self.vocab_size = vocab_size
+                 unique=False, ordered=False, seed=None) -> None:
         self.max_item_label = max_item_label
         self.bos = bos
-        self.unique = unique
-        self.ordered = ordered
 
-        try:
-            self.lengths = list(lengths)
-        except TypeError:
-            self.lengths = [lengths]
-
-        self.probs = probs
-        if self.probs is None:
-            if prob_type == 'zipf':
-                weights = 1 / np.array(self.lengths)
-                self.probs = weights / np.sum(weights)
-            elif prob_type == 'inv_zipf':
-                weights = np.array(self.lengths)
-                self.probs = weights / np.sum(weights)
+        self.copy_gen = copy_generator(lengths, alphabet_size=vocab_size,
+                                       unique=unique, ordered=ordered,
+                                       probs=probs, sampling_strategy=prob_type, seed=seed)
+        
 
         self.vocab_toks = [chr(start_char + i) for i in range(vocab_size)]
         self.idx_to_tok = [
@@ -44,23 +31,14 @@ class CopyDataset(IterableDataset):
         ] + self.vocab_toks
         self.tok_to_idx = {val:i for i, val in enumerate(self.idx_to_tok)}
         self.n_symbols = len(self.idx_to_tok)
-
-        self.seed = None
-        worker_info = get_worker_info()
-        if worker_info != None:
-            self.seed = get_worker_info().seed  # TODO: confirm is different
+        self.start_symbol_idx = self.tok_to_idx[self.vocab_toks[0]]
     
     def __iter__(self):
         return self
 
     def __next__(self):
-        rng = np.random.default_rng(self.seed)
-        vocab_idxs = [self.tok_to_idx[tok] for tok in self.vocab_toks]
-        length = rng.choice(self.lengths, p=self.probs)
-
-        pattern = rng.choice(vocab_idxs, size=length, replace=not self.unique)
-        if self.ordered:
-            pattern = np.sort(pattern)
+        pattern = next(self.copy_gen) + self.start_symbol_idx
+        length = len(pattern)
 
         pattern_mask = np.ones(len(pattern))
         xs = np.concatenate((
@@ -80,13 +58,51 @@ class CopyDataset(IterableDataset):
         ))
 
         if self.max_item_label > 0:
-            item_labels = np.sort(rng.choice(np.arange(1, self.max_item_label + 1), size=length, replace=False))
-            item_labels = np.concatenate(([0] if self.bos else [], item_labels, [0], item_labels))  # reflect copy operation
+            item_labels = np.sort(np.random.choice(np.arange(1, self.max_item_label + 1), size=length, replace=False))
         else:
             item_labels = np.zeros(length)
+        item_labels = np.concatenate(([0] if self.bos else [], item_labels, [0], item_labels))  # reflect copy operation
 
         return xs, item_labels, pred_mask
 
+
+def copy_generator(lengths, alphabet_size=2,
+                   ordered=False, unique=False,
+                   probs=None, sampling_strategy=None, 
+                   seed=None):
+
+    try:
+        lengths = list(lengths)
+    except TypeError:
+        lengths = [lengths]
+    
+    if unique and max(lengths) > alphabet_size:
+        raise ValueError('tokens are supposed to be unique, but maximum length exceeds vocab size')
+    
+    if probs is None:
+        if sampling_strategy == 'zipf':
+            weights = 1 / np.array(lengths)
+            probs = weights / np.sum(weights)
+        elif sampling_strategy == 'inv_zipf':
+            weights = np.array(lengths)
+            probs = weights / np.sum(weights)
+        else:
+            raise ValueError(f'sampling strategy unrecognized: {sampling_strategy}')
+    
+    
+    rng = np.random.default_rng(seed)
+    while True:
+        length = rng.choice(lengths, p=probs)
+        pattern = rng.choice(alphabet_size, size=length, replace=not unique)
+        if ordered:
+            pattern = np.sort(pattern)
+        
+        yield pattern
+
+
+class CFG:
+    def __init__(self, nt_lengths, ordered=True, n_nt=5, n_t=10, seed=None) -> None:
+        pass
 
 def pad_examples(exs, pad_tok):
     xs, item_labels, masks = zip(*exs)
@@ -114,6 +130,9 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
+    import sys
+    sys.path.append('../')
+
     ds = CopyDataset([1,2,3], vocab_size=10, prob_type='zipf', max_item_label=-1, bos=True)
     dl = to_dataloader(ds, batch_size=8)
     ex = next(iter(dl))

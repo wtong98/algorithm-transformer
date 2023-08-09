@@ -12,9 +12,9 @@ import sys
 sys.path.append('../')
 
 from model import *
-config = TransformerConfig(25 + 4, nope_embeding=True, num_layers=1)
+config = TransformerConfig(25 + 4, nope_embeding=True, num_layers=2)
 
-mngr = make_ckpt_manager('save/copy_oau_layers_25/oau_1l_0')
+mngr = make_ckpt_manager('save/oau_2l_1')
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
@@ -80,7 +80,7 @@ key_emb = voc_emb @ k0
 att_dot = np.einsum('ik,jk->ij', query_emb, key_emb)
 plt.imshow(att_dot[:,:])
 plt.colorbar()
-# plt.savefig('fig/dot_layer1_neither.png')
+# plt.savefig('fig/dot_layer1_aou_1l.png')
 
 # <codecell>
 # plt.plot(att_dot[1,4:])
@@ -159,6 +159,6 @@ def plot_sequence(in_seq, params, config):
 
 train_ds = CopyDataset(10, vocab_size=50)
 # plot_sequence([3, 5, 10, 20, 21, 30, 40, 1], params, config)
-plot_sequence([3, 4, 5, 6, 7, 8, 9, 10, 1], params, config)
-plt.savefig('fig/att_oau_1l.png')
+plot_sequence([3, 20, 21, 22, 23, 24, 25, 26, 1], params, config)
+# plt.savefig('fig/att_oau_1l.png')
 # %%

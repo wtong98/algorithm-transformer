@@ -5,7 +5,7 @@ Copying task based on duplicate string task from https://arxiv.org/abs/2305.1684
 # <codecell>
 import jax.numpy as jnp
 import numpy as np
-from torch.utils.data import IterableDataset, DataLoader, get_worker_info
+from torch.utils.data import DataLoader 
 
 start_char = 97    # ASCII 97 corresponds to 'a'
 

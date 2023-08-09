@@ -42,8 +42,7 @@ import optax
 from tqdm import tqdm
 
 from task.string_copy import *
-
-def new_seed(): return np.random.randint(1, np.iinfo(np.int32).max)
+from util import *
 
 @struct.dataclass
 class TransformerConfig:
