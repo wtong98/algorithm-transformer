@@ -111,7 +111,6 @@ if scratch_dir is not None:
 
 all_cases = []
 for i in range(n_iters):
-    print('ITERATION', i)
     all_cases.extend([
         Case('1 Layer (ordered and unique)', config=TransformerConfig(
             vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_{i}'),
@@ -289,27 +288,30 @@ evaluate_acc(8, params, config, n_symbols=n_symbols, n_examples=5, ds_kwargs=all
 
 
 # <codecell>
-with open('save/cases.pkl', 'rb') as fp:
+with open('save/remote/cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
 all_df = []
 for case in all_cases:
+    if not ('neither' in case.name):
+        continue 
+
     curr_df = pd.DataFrame(case.res['gen_acc'])
     curr_df['name'] = case.name
     all_df.append(curr_df)
 df = pd.concat(all_df)
 
 # <codecell>
-plt.gcf().set_size_inches(24, 3)
+plt.gcf().set_size_inches(28, 3)
 g = sns.barplot(df, x='len', y='acc', hue='name')
 g.legend_.set_title(None)
-sns.move_legend(g, 'upper right')
+sns.move_legend(g, 'lower left')
 
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-# plt.savefig('fig/gen_oau_rand_init.png')
+plt.savefig('fig/gen_neither.png')
 
 
 # %%

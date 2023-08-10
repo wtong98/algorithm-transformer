@@ -44,36 +44,6 @@ from tqdm import tqdm
 from task.string_copy import *
 from util import *
 
-@struct.dataclass
-class TransformerConfig:
-    """Global hyperparameters used to minimize obnoxious kwarg plumbing."""
-    vocab_size: int
-    num_layers: int = 6
-    emb_dim: int = 128
-    mlp_dim: int = 128
-    max_len: int = 256
-    causal: bool = True
-    kernel_init_name = 'xavier_uniform'
-    kernel_init_params: FrozenDict = struct.field(default_factory=FrozenDict)
-    bias_init_name = 'normal'
-    bias_init_params: FrozenDict = struct.field(default_factory=lambda: FrozenDict({'stddev': 1e-6}))
-    posemb_init: Optional[Callable] = None
-    posemb_scramble: bool = False
-    max_item_label: int = -1
-    freeze_embedding: bool = False
-    sinus_embedding: bool = False
-    nope_embeding: bool = False
-    rel_pos_att: bool = False
-    rel_pos_rand_max: int = 0
-
-    def kernel_init(self):
-        init_f = getattr(nn.initializers, self.kernel_init_name)
-        return init_f(**self.kernel_init_params)
-    
-    def bias_init(self):
-        init_f = getattr(nn.initializers, self.bias_init_name)
-        return init_f(**self.bias_init_params)
-
 
 def sinusoidal_init(max_len=2048,
                     min_scale=1.0,
@@ -747,14 +717,17 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
             fails.append((prompt, pred))
 
     return n_correct / n_examples, fails
+
+
 # <codecell>
 '''
-n_symbols = 25
+n_symbols = 10
 max_item_label = 25
 max_train_len = 5
 
-
-train_ds = CopyDataset(range(1, max_train_len+1), 
+cfg_gen = cfg_generator(range(1, max_train_len+1), n_nonterminals=2*max_train_len, n_terminals=n_symbols)
+train_ds = CopyDataset(range(1, max_train_len+1),
+    custom_gen=cfg_gen,
     bos=True, prob_type='zipf', ordered=True, unique=True,
     vocab_size=n_symbols, max_item_label=max_item_label)
 
@@ -762,15 +735,13 @@ train_dl = to_dataloader(train_ds, batch_size=32,
                          num_workers=0, pin_memory=True)
 
 config = TransformerConfig(
-    # n_symbols + 3, rel_pos_att=True, rel_pos_rand_max=max_item_label * 2, max_len=512)
     train_ds.n_symbols, 
     num_layers=2,
-    freeze_embedding=True,
-    nope_embeding=True)
+    rel_pos_att=True)
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=20_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=50_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 # <codecell>
 train = stack_forest(info['train_metrics'])
@@ -805,7 +776,7 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 1] 
+inputs = [3, 8, 9, 11, 13, 4, 5, 4, 4, 12, 12, 13, 6, 1]  # TODO: test rigorously across different configurations
 # predict_with_lab(inputs, raw_state['params'], config)
 seq, info = predict(inputs, raw_state['params'], config)
 seq
