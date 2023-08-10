@@ -24,15 +24,14 @@ limitations under the License.
 import functools
 import os.path
 import shutil
-from typing import Callable, Any, Optional, Tuple
+from typing import Any, Tuple
 
-from flax import linen as nn, struct, traverse_util
+from flax import linen as nn, traverse_util
 from flax.core.frozen_dict import freeze, FrozenDict
 from flax.training import train_state, orbax_utils
 from flax.training.common_utils import stack_forest
 
 import jax
-from jax import lax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -725,48 +724,28 @@ n_symbols = 10
 max_item_label = 25
 max_train_len = 5
 
-cfg_gen = cfg_generator(range(1, max_train_len+1), n_nonterminals=2*max_train_len, n_terminals=n_symbols)
-train_ds = CopyDataset(range(1, max_train_len+1),
-    custom_gen=cfg_gen,
-    bos=True, prob_type='zipf', ordered=True, unique=True,
-    vocab_size=n_symbols, max_item_label=max_item_label)
-
-train_dl = to_dataloader(train_ds, batch_size=32,
-                         num_workers=0, pin_memory=True)
-
 config = TransformerConfig(
-    train_ds.n_symbols, 
-    num_layers=2,
-    rel_pos_att=True)
+    num_layers=6,
+    nope_embeding=True,
+
+    ds_generator_name='CfgGenerator',
+    ds_generator_kwargs=FrozenDict({
+        'nt_lengths': tuple(np.arange(max_train_len) + 1),
+        't_lengths': tuple(np.arange(3) + 1),
+        'sampling_strategy': 'zipf',
+        'n_nonterminals': 2*max_train_len,
+        'n_terminals': n_symbols
+    }))
+
+train_ds, config = CopyDataset.from_config(config)
+train_dl = to_dataloader(train_ds, batch_size=32, pin_memory=True)
+
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=50_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=10_000, print_every=1_000, save_dir='scratch/save/tmp')
 
-# <codecell>
-train = stack_forest(info['train_metrics'])
-test = stack_forest(info['eval_metrics'])
-
-fig, axs = plt.subplots(2, 1, figsize=(8, 6))
-
-for ax, metrics in zip(axs, [train, test]):
-    ax.plot(metrics['accuracy'], color='C0', label='accuracy', alpha=0.8)
-    ax.set_ylabel('Accuracy', color='C0')
-    ax.tick_params(axis='y', labelcolor='C0')
-
-    ax.plot(metrics['aon_accuracy'], color='C0', label='aon_accuracy', alpha=0.6, linestyle='dashed')
-    ax.set_xscale('log')
-
-    ax2 = ax.twinx()
-    ax2.plot(metrics['loss'], color='C1', label='loss', alpha=0.8)
-    ax2.set_ylabel('Loss', color='C1')
-    ax2.tick_params(axis='y', labelcolor='C1')
-
-    # ax.plot(metrics['confidence'], label='confidence')
-    # ax.plot(metrics['loss'], label='loss')
-
-# plt.savefig('scratch/fig/item_label_loss_curve.png')
-
+plot_train_metrics(info)
 # <codecell>
 mngr = make_ckpt_manager('scratch/save/tmp')
 best_step = mngr.best_step()
@@ -776,7 +755,7 @@ r = mngr.restore(mngr.latest_step())
 raw_state = r['state']
 
 # %%
-inputs = [3, 8, 9, 11, 13, 4, 5, 4, 4, 12, 12, 13, 6, 1]  # TODO: test rigorously across different configurations
+inputs = [3, 9, 11, 6, 12, 8, 9, 4, 12, 8, 5, 7, 5, 1]  # TODO: test rigorously across different configurations
 # predict_with_lab(inputs, raw_state['params'], config)
 seq, info = predict(inputs, raw_state['params'], config)
 seq

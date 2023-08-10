@@ -85,7 +85,7 @@ class CfgGenerator(BaseGenerator):
                                      ordered=nt_ordered, 
                                      unique=nt_ordered, 
                                      sampling_strategy=sampling_strategy, 
-                                     seed=seed)
+                                     seed=None) # NOTE: high-level generation will be random
 
         t_gen = RandomGenerator(t_lengths, alphabet_size=n_terminals, seed=seed+1)
         self.nt_to_ts = {nt: next(t_gen)['pattern'] for nt in range(n_nonterminals)}

@@ -20,21 +20,8 @@ from model import *
 from task.string_copy import *
 
 
-def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examples=100, use_tqdm=False, ds_kwargs=None):
-    if ds_kwargs is None:
-        ds_kwargs = {}
-    
-    default_ds_kwargs = {
-        'vocab_size': n_symbols,
-        'max_item_label': max_item_label,
-        'bos': True
-    }
-
-    for k, v in ds_kwargs.items():
-        default_ds_kwargs[k] = v
-
-    ds_class = CopyDataset if config.causal else CopyDataset
-    train_ds = ds_class(length, **default_ds_kwargs)
+def evaluate_acc(params, config, n_examples=100, use_tqdm=False):
+    config, train_ds = CopyDataset.from_config(config)
 
     n_correct = 0
     fails = []
@@ -42,16 +29,6 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
     it = zip(range(n_examples), iter(train_ds))
     if use_tqdm:
         it = tqdm(it, total=n_examples)
-
-    if not config.causal:
-        dl = to_dataloader(train_ds, batch_size=n_examples)
-        batch = next(iter(dl))
-        rng = jax.random.PRNGKey(new_seed())
-
-        logits = Transformer(config).apply({'params': params}, batch['inputs'], rngs={'rng': rng})
-        preds = jnp.argmax(logits, -1)
-        mid = preds.shape[1] // 2
-        return jnp.mean(preds[:,mid:] == batch['outputs'][:,mid:]).item(), None
 
     for _, example in it:
         ans = example[0]
@@ -81,11 +58,13 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
 
 n_iters = 3
-n_symbols = 25
+n_symbols = 10
 test_every = 1
 n_test_examples = 32
+max_train_len = 5
 max_test_len = 25
 max_item_label = 50
+
 
 
 @dataclass
@@ -96,8 +75,13 @@ class Case:
     train_iters: int = 30_000
     res: dict = field(default_factory=dict)
     ds_kwargs: dict = field(default_factory=dict)
-    train_len_min: int = 1
-    train_len_max: int = 5
+
+common_ds_kwargs = FrozenDict(
+    nt_lengths=tuple(range(1, max_train_len+1)),
+    t_lengths=tuple(range(1, 4)),
+    n_nonterminals=max_test_len,
+    n_terminals=n_symbols
+)
 
 
 save_prefix = ''
@@ -112,82 +96,19 @@ if scratch_dir is not None:
 all_cases = []
 for i in range(n_iters):
     all_cases.extend([
-        Case('1 Layer (ordered and unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_{i}'),
-        Case('1 Layer (ordered and unique, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_fr_{i}'),
-        Case('2 Layer (ordered and unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_{i}'),
-        Case('2 Layer (ordered and unique, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_fr_{i}'),
-        Case('3 Layer (ordered and unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_{i}'),
-        Case('3 Layer (ordered and unique, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_fr_{i}'),
-        Case('4 Layer (ordered and unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_4l_{i}'),
-        Case('5 Layer (ordered and unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_5l_{i}'),
-        Case('6 Layer (ordered and unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_6l_{i}'),
+        # Case('1 Layer (ordered and unique)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_{i}'),
+        # Case('2 Layer (ordered and unique)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_{i}'),
+        # Case('3 Layer (ordered and unique)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_{i}'),
+        # Case('4 Layer (ordered and unique)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_4l_{i}'),
+        # Case('5 Layer (ordered and unique)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_5l_{i}'),
+        # Case('6 Layer (ordered and unique)', config=TransformerConfig(
+        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_6l_{i}'),
         
-        Case('1 Layer (ordered)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'ordered': True}, save_dir=f'save/o_1l_{i}'),
-        Case('1 Layer (ordered, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={'ordered': True}, save_dir=f'save/o_1l_fr_{i}'),
-        Case('2 Layer (ordered)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'ordered': True}, save_dir=f'save/o_2l_{i}'),
-        Case('2 Layer (ordered, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={'ordered': True}, save_dir=f'save/o_2l_fr_{i}'),
-        Case('3 Layer (ordered)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'ordered': True}, save_dir=f'save/o_3l_{i}'),
-        Case('3 Layer (ordered, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={'ordered': True}, save_dir=f'save/o_3l_fr_{i}'),
-        Case('4 Layer (ordered)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'ordered': True}, save_dir=f'save/o_4l_{i}'),
-        Case('5 Layer (ordered)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'ordered': True}, save_dir=f'save/o_5l_{i}'),
-        Case('6 Layer (ordered)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'ordered': True}, save_dir=f'save/o_6l_{i}'),
-
-        Case('1 Layer (unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True}, save_dir=f'save/u_1l_{i}'),
-        Case('1 Layer (unique, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={'unique': True}, save_dir=f'save/u_1l_fr_{i}'),
-        Case('2 Layer (unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'unique': True}, save_dir=f'save/u_2l_{i}'),
-        Case('2 Layer (unique, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={'unique': True}, save_dir=f'save/u_2l_fr_{i}'),
-        Case('3 Layer (unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'unique': True}, save_dir=f'save/u_3l_{i}'),
-        Case('3 Layer (unique, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={'unique': True}, save_dir=f'save/u_3l_fr_{i}'),
-        Case('4 Layer (unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True}, save_dir=f'save/u_4l_{i}'),
-        Case('5 Layer (unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True}, save_dir=f'save/u_5l_{i}'),
-        Case('6 Layer (unique)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True}, save_dir=f'save/u_6l_{i}'),
-
-        Case('1 Layer (neither)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={}, save_dir=f'save/n_1l_{i}'),
-        Case('1 Layer (neither, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=1, freeze_embedding=True), ds_kwargs={}, save_dir=f'save/n_1l_fr_{i}'),
-        Case('2 Layer (neither)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={}, save_dir=f'save/n_2l_{i}'),
-        Case('2 Layer (neither, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=2, freeze_embedding=True), ds_kwargs={}, save_dir=f'save/n_2l_fr_{i}'),
-        Case('3 Layer (neither)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={}, save_dir=f'save/n_3l_{i}'),
-        Case('3 Layer (neither, frozen)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=3, freeze_embedding=True), ds_kwargs={}, save_dir=f'save/n_3l_fr_{i}'),
-        Case('4 Layer (neither)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={}, save_dir=f'save/n_4l_{i}'),
-        Case('5 Layer (neither)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={}, save_dir=f'save/n_5l_{i}'),
-        Case('6 Layer (neither)', config=TransformerConfig(
-            vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={}, save_dir=f'save/n_6l_{i}'),
-
         # Case('Item-Label', config=TransformerConfig(
         #     vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={}, save_dir=f'save/item_label_{i}'),
         # Case('Ordered and Unique', config=TransformerConfig(
@@ -199,14 +120,13 @@ for i in range(n_iters):
         # Case('Neither', config=TransformerConfig(
         #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={}, save_dir=f'save/neither_{i}'),
 
-        # Case('NoPE', config=TransformerConfig(
-        #     vocab_size=n_symbols + 4, nope_embeding=True), save_dir=f'save/nope_{i}', ds_kwargs={'unique': True, 'ordered': True}),
-        # Case('Sinusoid', config=TransformerConfig(
-        #     vocab_size=n_symbols + 4), save_dir=f'save/sinusoid_{i}', ds_kwargs={'unique': True, 'ordered': True}),
-        # Case('Relative', config=TransformerConfig(
-        #     vocab_size=n_symbols + 4, rel_pos_att=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative_{i}'),
-        # Case('Random (Relative)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative-rand_{i}'),
+        Case('NoPE', config=TransformerConfig(
+            nope_embeding=True), save_dir=f'save/nope_{i}'),
+        Case('Sinusoid', config=TransformerConfig(), save_dir=f'save/sinusoid_{i}'),
+        Case('Relative', config=TransformerConfig(
+            rel_pos_att=True), save_dir=f'save/relative_{i}'),
+        Case('Random (Relative)', config=TransformerConfig(
+            rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
         
 
         # Case('NoPE', config=TransformerConfig(
@@ -226,6 +146,9 @@ for i in range(n_iters):
 
 for case in all_cases:
     case.save_dir = save_prefix + case.save_dir
+    case.config = case.config.replace(
+        ds_generator_name='CfgGenerator',
+        ds_generator_kwargs=common_ds_kwargs)
 
 # <codecell>
 for case in all_cases:
@@ -235,15 +158,13 @@ for case in all_cases:
 
     print('TRAINING', case.name)
 
-    train_ds = CopyDataset(range(1, case.train_len_max+1),
-                           prob_type='zipf',
-                           vocab_size=case.config.vocab_size-4, max_item_label=max_item_label,
-                           **case.ds_kwargs)
+    train_ds, case.config = CopyDataset.from_config(case.config)
     train_dl = to_dataloader(train_ds, batch_size=32,
                              num_workers=0, pin_memory=True)
 
     _, info = train(case.config, train_dl, eval_dl=train_dl,
                     n_iters=case.train_iters, print_every=1_000, save_dir=case.save_dir)
+    plot_train_metrics(info, save_path=case.save_dir + '/metrics.png')
     # case.res['train_metrics'] = info['train_metrics']
     # case.res['eval_metrics'] = info['eval_metrics']
 

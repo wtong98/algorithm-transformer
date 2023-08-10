@@ -8,7 +8,9 @@ from typing import Callable, Optional
 
 from flax import linen as nn, struct
 from flax.core.frozen_dict import FrozenDict
+from flax.training.common_utils import stack_forest
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -47,3 +49,33 @@ class TransformerConfig:
     def bias_init(self):
         init_f = getattr(nn.initializers, self.bias_init_name)
         return init_f(**self.bias_init_params)
+
+
+def plot_train_metrics(info, save_path=None):
+    train = stack_forest(info['train_metrics'])
+    # test = stack_forest(info['eval_metrics'])
+
+    fig, axs = plt.subplots(1, 1, figsize=(6, 3))
+
+    for ax, metrics in zip([axs], [train]):
+        ax.plot(metrics['accuracy'], color='C0', label='accuracy', alpha=0.8)
+        ax.set_ylabel('Accuracy', color='C0')
+        ax.tick_params(axis='y', labelcolor='C0')
+
+        ax.plot(metrics['aon_accuracy'], color='C0', label='aon_accuracy', alpha=0.6, linestyle='dashed')
+        ax.set_xscale('log')
+
+        ax2 = ax.twinx()
+        ax2.plot(metrics['loss'], color='C1', label='loss', alpha=0.8)
+        ax2.set_ylabel('Loss', color='C1')
+        ax2.tick_params(axis='y', labelcolor='C1')
+        ax.set_title('Train metrics')
+
+        # ax.plot(metrics['confidence'], label='confidence')
+        # ax.plot(metrics['loss'], label='loss')
+
+    fig.tight_layout()
+    fig.legend()
+
+    if save_path is not None:
+        plt.savefig(save_path)
