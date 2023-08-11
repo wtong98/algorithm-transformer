@@ -558,7 +558,7 @@ def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = N
         return predict_all(prompt, params, config, seed=seed)
 
 
-def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, max_len=50):
+def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, enforce_max=True):
     prompt = jnp.array(prompt).astype(jnp.int32)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
@@ -567,12 +567,17 @@ def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, max_len=50
         seed = np.random.randint(1, 99999)
     rng = jax.random.PRNGKey(seed)
 
+    max_len = 999
+    if enforce_max:
+        max_len = 2 * prompt.shape[1]
+
     it = range(max_len)
     if use_tqdm:
         it = tqdm(it)
 
     for _ in it:
-        prompt, logits = get_next(prompt, params, config, rng=rng)
+        rng, curr_rng = jax.random.split(rng)
+        prompt, logits = get_next(prompt, params, config, rng=curr_rng)
 
         if prompt[0,-1] == 2: # END == 2
             break
@@ -614,7 +619,8 @@ def predict_with_lab(prompt: list, params: dict, config: TransformerConfig, seed
         it = tqdm(it)
 
     for _ in it:
-        prompt, labels = get_next_with_lab(prompt, labels, params, config, rng=rng)
+        rng, curr_rng = jax.random.split(rng)
+        prompt, labels = get_next_with_lab(prompt, labels, params, config, rng=curr_rng)
 
         if prompt[0,-1] == 2: # END == 2
             break

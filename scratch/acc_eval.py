@@ -20,8 +20,31 @@ from model import *
 from task.string_copy import *
 
 
-def evaluate_acc(params, config, n_examples=100, use_tqdm=False):
-    config, train_ds = CopyDataset.from_config(config)
+def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
+    kwargs = case.config.ds_generator_kwargs.copy({'nt_lengths': length})
+    config = case.config.replace(ds_generator_kwargs=kwargs)
+    train_ds, config = CopyDataset.from_config(config)
+
+    # train_dl = to_dataloader(train_ds, batch_size=n_examples)
+
+    # batch = next(iter(train_dl))['inputs']
+    # prompt = batch[:,:(length+2)]
+    # print('PROMPT', prompt)
+
+    # seed = new_seed()
+    # rng = jax.random.PRNGKey(seed)
+
+    # m = Transformer(config)
+    # for _ in range(length + 1):
+    #     rng, curr_rng = jax.random.split(rng)
+    #     logits = m.apply({'params': params}, prompt, rngs={'rng': curr_rng})
+    #     nxt_toks = logits.argmax(-1)[:,[-1]]
+    #     prompt = jnp.concatenate((prompt, nxt_toks), axis=1)
+    #     print('PROMPT', prompt)
+    
+    # aon_acc = jnp.mean(prompt == batch, axis=1)
+    # aon_acc = jnp.mean(jnp.isclose(aon_acc, 1))
+    # return aon_acc
 
     n_correct = 0
     fails = []
@@ -36,7 +59,8 @@ def evaluate_acc(params, config, n_examples=100, use_tqdm=False):
         prompt = ans[:len(ans)//2+offset]
 
         try:
-            pred = predict(prompt, params, config)
+            # pred = predict(prompt, params, config)
+            pred = np.zeros((5,))
 
         except Exception as e:
             print('failed to predict: ', e)
@@ -178,7 +202,7 @@ for case in all_cases:
     case.res['gen_acc'] = []
     case.res['fails'] = []
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
-        acc, fails = evaluate_acc(ex_len, params, case.config, max_item_label=max_item_label, n_examples=n_test_examples, n_symbols=case.config.vocab_size-4, ds_kwargs=case.ds_kwargs)
+        acc, fails = evaluate_acc(ex_len, params, case.config, n_examples=n_test_examples)
         case.res['gen_acc'].append({'len': ex_len, 'acc': acc})
         # case.res['fails'].append({'len': ex_len, 'examples': fails})
 
@@ -186,26 +210,28 @@ for case in all_cases:
 with open('save/cases.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
+sys.exit(0)
 if scratch_dir is not None:
     sys.exit(0)  # terminate now if on cluster
 
 
 # <codecell>
-mngr = make_ckpt_manager(all_cases[3].save_dir)
-config = all_cases[3].config
+case = all_cases[1]
+mngr = make_ckpt_manager(case.save_dir)
+config = case.config
 r = mngr.restore(mngr.best_step())
 params = r['state']['params']
 print('BEST', mngr.best_step())
 
 # evaluate_acc(300, params, config, n_examples=32)
-prompt = [5, 4, 5, 5, 5, 5, 1]
-pred, labs = predict(prompt, params, config)
-correct = np.concatenate((prompt, prompt[1:]))
-# print('corr', correct)
-print('pred', pred)
-print('labs', labs)
+# prompt = [5, 4, 5, 5, 5, 5, 1]
+# pred, labs = predict(prompt, params, config)
+# correct = np.concatenate((prompt, prompt[1:]))
+# # print('corr', correct)
+# print('pred', pred)
+# print('labs', labs)
 
-evaluate_acc(8, params, config, n_symbols=n_symbols, n_examples=5, ds_kwargs=all_cases[3].ds_kwargs)
+evaluate_acc(20, params, config, n_examples=32)
 
 
 # <codecell>
