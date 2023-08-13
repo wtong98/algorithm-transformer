@@ -59,8 +59,8 @@ def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
         prompt = ans[:len(ans)//2+offset]
 
         try:
-            # pred = predict(prompt, params, config)
-            pred = np.zeros((5,))
+            pred = predict(prompt, params, config)
+            # pred = np.zeros((5,))
 
         except Exception as e:
             print('failed to predict: ', e)
@@ -86,7 +86,7 @@ n_symbols = 10
 test_every = 1
 n_test_examples = 32
 max_train_len = 5
-max_test_len = 25
+max_test_len = 15
 max_item_label = 50
 
 
@@ -144,14 +144,24 @@ for i in range(n_iters):
         # Case('Neither', config=TransformerConfig(
         #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={}, save_dir=f'save/neither_{i}'),
 
-        Case('NoPE', config=TransformerConfig(
-            nope_embeding=True), save_dir=f'save/nope_{i}'),
-        Case('Sinusoid', config=TransformerConfig(), save_dir=f'save/sinusoid_{i}'),
-        Case('Relative', config=TransformerConfig(
-            rel_pos_att=True), save_dir=f'save/relative_{i}'),
-        Case('Random (Relative)', config=TransformerConfig(
-            rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
-        
+        # Case('NoPE', config=TransformerConfig(
+        #     nope_embeding=True), save_dir=f'save/nope_{i}'),
+        # Case('Sinusoid', config=TransformerConfig(), save_dir=f'save/sinusoid_{i}'),
+        # Case('Relative', config=TransformerConfig(
+        #     rel_pos_att=True), save_dir=f'save/relative_{i}'),
+        # Case('Random (Relative)', config=TransformerConfig(
+        #     rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
+
+        Case('1 Layer', config=TransformerConfig(
+            nope_embeding=True, num_layers=1), save_dir=f'save/nope_1l_{i}'),
+        Case('2 Layer', config=TransformerConfig(
+            nope_embeding=True, num_layers=2), save_dir=f'save/nope_2l_{i}'),
+        Case('4 Layer', config=TransformerConfig(
+            nope_embeding=True, num_layers=4), save_dir=f'save/nope_4l_{i}'),
+        Case('8 Layer', config=TransformerConfig(
+            nope_embeding=True, num_layers=8), save_dir=f'save/nope_8l_{i}'),
+        Case('16 Layer', config=TransformerConfig(
+            nope_embeding=True, num_layers=16), save_dir=f'save/nope_16l_{i}'),
 
         # Case('NoPE', config=TransformerConfig(
         #     vocab_size=n_symbols + 4, nope_embeding=True), save_dir=f'save/nope_{i}', ds_kwargs={}),
@@ -204,13 +214,14 @@ for case in all_cases:
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
         acc, fails = evaluate_acc(ex_len, params, case.config, n_examples=n_test_examples)
         case.res['gen_acc'].append({'len': ex_len, 'acc': acc})
-        # case.res['fails'].append({'len': ex_len, 'examples': fails})
+
+    jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
+    
 
 # <codecell>
 with open('save/cases.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
-sys.exit(0)
 if scratch_dir is not None:
     sys.exit(0)  # terminate now if on cluster
 
@@ -235,15 +246,12 @@ evaluate_acc(20, params, config, n_examples=32)
 
 
 # <codecell>
-with open('save/remote/cases.pkl', 'rb') as fp:
+with open('save/cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
 all_df = []
 for case in all_cases:
-    if not ('neither' in case.name):
-        continue 
-
     curr_df = pd.DataFrame(case.res['gen_acc'])
     curr_df['name'] = case.name
     all_df.append(curr_df)
@@ -258,7 +266,7 @@ sns.move_legend(g, 'lower left')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_neither.png')
+plt.savefig('fig/gen_cfg_layers.png')
 
 
 # %%

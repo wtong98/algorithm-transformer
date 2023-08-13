@@ -757,11 +757,11 @@ mngr = make_ckpt_manager('scratch/save/tmp')
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
-r = mngr.restore(mngr.latest_step())
+r = mngr.restore(mngr.all_steps()[-2])
 raw_state = r['state']
 
 # %%
-inputs = [3, 9, 11, 6, 12, 8, 9, 4, 12, 8, 5, 7, 5, 1]  # TODO: test rigorously across different configurations
+inputs = [3, 9, 11, 6, 12, 8, 9, 4, 12, 1]  # TODO: test rigorously across different configurations
 # predict_with_lab(inputs, raw_state['params'], config)
 seq, info = predict(inputs, raw_state['params'], config)
 seq

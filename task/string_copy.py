@@ -102,6 +102,20 @@ class CfgGenerator(BaseGenerator):
         return {k : v + start_idx for k, v in self.nt_to_ts.items()}
 
 
+def from_config(ds_class, config, unify_config=True):
+    mod = sys.modules[__name__]
+    gen_class = getattr(mod, config.ds_generator_name)
+    gen = gen_class(**config.ds_generator_kwargs)
+    ds = ds_class(gen, bos=config.include_bos)
+
+    if unify_config:
+        config = config.replace(vocab_size=ds.n_symbols)
+        if hasattr(gen, 'max_item_label'):
+            config = config.replace(max_item_label=gen.max_item_label)
+        
+    return ds, config
+
+
 class CopyDataset(IterableDataset):
     def __init__(self, generator: BaseGenerator, bos=True) -> None:
         self.gen = generator
@@ -120,17 +134,7 @@ class CopyDataset(IterableDataset):
     
     @staticmethod
     def from_config(config: TransformerConfig, unify_config=True):
-        mod = sys.modules[__name__]
-        gen_class = getattr(mod, config.ds_generator_name)
-        gen = gen_class(**config.ds_generator_kwargs)
-        ds = CopyDataset(gen, bos=config.include_bos)
-
-        if unify_config:
-            config = config.replace(vocab_size=ds.n_symbols)
-            if hasattr(gen, 'max_item_label'):
-                config = config.replace(max_item_label=gen.max_item_label)
-            
-        return ds, config
+        return from_config(CopyDataset, config, unify_config=unify_config)
     
     def __iter__(self):
         return self
@@ -165,6 +169,54 @@ class CopyDataset(IterableDataset):
         return xs, item_labels, pred_mask
 
 
+class GenerativeDataset(IterableDataset):
+    def __init__(self, generator: BaseGenerator, bos: bool = True) -> None:
+        self.gen = generator
+        self.bos = bos
+
+        self.vocab_toks = [chr(start_char + i) for i in range(self.gen.alphabet_size)]
+        self.idx_to_tok = [
+            'PAD',
+            'GO',
+            'END',
+            'START'
+        ] + self.vocab_toks
+        self.tok_to_idx = {val:i for i, val in enumerate(self.idx_to_tok)}
+        self.n_symbols = len(self.idx_to_tok)
+        self.start_symbol_idx = self.tok_to_idx[self.vocab_toks[0]]
+
+    @staticmethod
+    def from_config(config: TransformerConfig, unify_config=True):
+        return from_config(GenerativeDataset, config, unify_config=unify_config)
+    
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        out = next(self.gen)
+        pattern = out.get('pattern') + self.start_symbol_idx
+        item_labels = out.get('labels')
+        length = len(pattern)
+
+        pattern_mask = np.ones(len(pattern))
+        xs = np.concatenate((
+            [self.tok_to_idx['START']] if self.bos else [], 
+            pattern, 
+        ))
+
+        pred_mask = np.concatenate((
+            [1] if self.bos else [],
+            1 * pattern_mask
+        ))
+
+        if item_labels is None:
+            item_labels = np.zeros(length)
+        item_labels = np.concatenate(([0] if self.bos else [], item_labels))
+
+        return xs, item_labels, pred_mask
+        
+
+
 def pad_examples(exs):
     xs, item_labels, masks = zip(*exs)
     max_len = np.max([len(x) for x in xs])
@@ -196,8 +248,9 @@ if __name__ == '__main__':
         }
     )
 
-    ds, config = CopyDataset.from_config(config)
+    ds, config = GenerativeDataset.from_config(config)
     
+    # TODO test generative dataset
     dl = to_dataloader(ds, batch_size=8)
     print(next(iter(dl)))
 # %%
