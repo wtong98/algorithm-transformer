@@ -21,7 +21,7 @@ from task.string_copy import *
 
 
 def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
-    kwargs = case.config.ds_generator_kwargs.copy({'nt_lengths': length})
+    kwargs = case.config.ds_generator_kwargs.copy({'lengths': length})
     config = case.config.replace(ds_generator_kwargs=kwargs)
     train_ds, config = CopyDataset.from_config(config)
 
@@ -86,9 +86,8 @@ n_symbols = 10
 test_every = 1
 n_test_examples = 32
 max_train_len = 5
-max_test_len = 15
+max_test_len = 20
 max_item_label = 50
-
 
 
 @dataclass
@@ -99,16 +98,17 @@ class Case:
     train_iters: int = 30_000
     res: dict = field(default_factory=dict)
     ds_kwargs: dict = field(default_factory=dict)
+    fine_tune_split: float | None = None
 
 common_ds_kwargs = FrozenDict(
-    nt_lengths=tuple(range(1, max_train_len+1)),
+    lengths=tuple(range(1, max_train_len+1)),
     t_lengths=tuple(range(1, 4)),
     n_nonterminals=max_test_len,
     n_terminals=n_symbols
 )
 
 
-save_prefix = ''
+save_prefix = 'save/'
 scratch_dir = os.getenv('SCRATCH')
 if scratch_dir is not None:
     save_prefix = scratch_dir +  '/pehlevan_lab/Lab/wlt/transformer/'
@@ -120,30 +120,6 @@ if scratch_dir is not None:
 all_cases = []
 for i in range(n_iters):
     all_cases.extend([
-        # Case('1 Layer (ordered and unique)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=1), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_1l_{i}'),
-        # Case('2 Layer (ordered and unique)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=2), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_2l_{i}'),
-        # Case('3 Layer (ordered and unique)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=3), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_3l_{i}'),
-        # Case('4 Layer (ordered and unique)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=4), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_4l_{i}'),
-        # Case('5 Layer (ordered and unique)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=5), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_5l_{i}'),
-        # Case('6 Layer (ordered and unique)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True, num_layers=6), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/oau_6l_{i}'),
-        
-        # Case('Item-Label', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={}, save_dir=f'save/item_label_{i}'),
-        # Case('Ordered and Unique', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/ord_and_uniq_{i}'),
-        # Case('Ordered', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'ordered': True}, save_dir=f'save/ord_{i}'),
-        # Case('Unique', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={'unique': True}, save_dir=f'save/uniq_{i}'),
-        # Case('Neither', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, nope_embeding=True), ds_kwargs={}, save_dir=f'save/neither_{i}'),
-
         # Case('NoPE', config=TransformerConfig(
         #     nope_embeding=True), save_dir=f'save/nope_{i}'),
         # Case('Sinusoid', config=TransformerConfig(), save_dir=f'save/sinusoid_{i}'),
@@ -152,37 +128,32 @@ for i in range(n_iters):
         # Case('Random (Relative)', config=TransformerConfig(
         #     rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
 
-        Case('1 Layer', config=TransformerConfig(
-            nope_embeding=True, num_layers=1), save_dir=f'save/nope_1l_{i}'),
-        Case('2 Layer', config=TransformerConfig(
-            nope_embeding=True, num_layers=2), save_dir=f'save/nope_2l_{i}'),
-        Case('4 Layer', config=TransformerConfig(
-            nope_embeding=True, num_layers=4), save_dir=f'save/nope_4l_{i}'),
-        Case('8 Layer', config=TransformerConfig(
-            nope_embeding=True, num_layers=8), save_dir=f'save/nope_8l_{i}'),
-        Case('16 Layer', config=TransformerConfig(
-            nope_embeding=True, num_layers=16), save_dir=f'save/nope_16l_{i}'),
+        Case('CFG', config=TransformerConfig(
+            nope_embeding=True,
+            ds_generator_name='CfgGenerator',
+            ds_generator_kwargs=common_ds_kwargs
+        ), save_dir=f'cfg_{i}'),
 
-        # Case('NoPE', config=TransformerConfig(
-        #     vocab_size=n_symbols + 4, nope_embeding=True), save_dir=f'save/nope_{i}', ds_kwargs={}),
-        # Case('Sinusoid', config=TransformerConfig(
-        #     vocab_size=n_symbols + 4), save_dir=f'save/sinusoid_{i}', ds_kwargs={}),
-        # # Case('Sinusoid (Item-Label)', config=TransformerConfig(
-        # #     vocab_size=n_symbols + 3, max_item_label=max_item_label, freeze_embedding=True, sinus_embedding=True,
-        # # ), save_dir=f'save/item-label-fixed_{i}'),
-        # Case('Relative', config=TransformerConfig(
-        #     vocab_size=n_symbols + 4, rel_pos_att=True), ds_kwargs={}, save_dir=f'save/relative_{i}'),
-        # # Case('Random (Relative)', config=TransformerConfig(
-        # #     vocab_size=n_symbols +4, rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), ds_kwargs={'unique': True, 'ordered': True}, save_dir=f'save/relative-rand_{i}'),
-        # Case('Random (Item-Label)', config=TransformerConfig(
-        #     vocab_size=n_symbols +4, max_item_label=max_item_label), ds_kwargs={'bos': False}, save_dir=f'save/item-label_{i}'),
+        Case('CFG (fine-tuned)', config=TransformerConfig(
+            nope_embeding=True,
+            ds_generator_name='CfgGenerator',
+            ds_generator_kwargs=common_ds_kwargs
+        ), fine_tune_split=0.2, save_dir=f'cfg_ft_{i}'),
+
+        Case('Ord and Uniq', config=TransformerConfig(
+            nope_embeding=True,
+            ds_generator_name='RandomGenerator',
+            ds_generator_kwargs=FrozenDict(
+                lengths=common_ds_kwargs['lengths'],
+                alphabet_size=max_test_len,
+                ordered=True,
+                unique=True
+            )
+        ), save_dir=f'oau_{i}')
     ])
 
 for case in all_cases:
     case.save_dir = save_prefix + case.save_dir
-    case.config = case.config.replace(
-        ds_generator_name='CfgGenerator',
-        ds_generator_kwargs=common_ds_kwargs)
 
 # <codecell>
 for case in all_cases:
@@ -192,11 +163,21 @@ for case in all_cases:
 
     print('TRAINING', case.name)
 
+    init_params = None
+    if case.fine_tune_split is not None:
+        print('(training base)')
+        train_ds, case.config = GenerativeDataset.from_config(case.config)
+        train_dl = to_dataloader(train_ds, batch_size=32, pin_memory=True)
+
+        n_iters = int(case.fine_tune_split * case.train_iters)
+        state, info = train(case.config, train_dl, eval_dl=train_dl, n_iters=n_iters, print_every=1000)
+        init_params = state.params
+
     train_ds, case.config = CopyDataset.from_config(case.config)
     train_dl = to_dataloader(train_ds, batch_size=32,
                              num_workers=0, pin_memory=True)
 
-    _, info = train(case.config, train_dl, eval_dl=train_dl,
+    _, info = train(case.config, train_dl, init_params=init_params, eval_dl=train_dl,
                     n_iters=case.train_iters, print_every=1_000, save_dir=case.save_dir)
     plot_train_metrics(info, save_path=case.save_dir + '/metrics.png')
     # case.res['train_metrics'] = info['train_metrics']
@@ -266,7 +247,7 @@ sns.move_legend(g, 'lower left')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_cfg_layers.png')
+plt.savefig('fig/gen_cfg_pretrain.png')
 
 
 # %%

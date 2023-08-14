@@ -5,6 +5,9 @@ author: William Tong (wtong@g.harvard.edu)
 """
 
 # <codecell>
+from dataclasses import dataclass, field
+import pickle
+
 import matplotlib
 from sklearn.decomposition import PCA
 
@@ -12,9 +15,30 @@ import sys
 sys.path.append('../')
 
 from model import *
-config = TransformerConfig(25 + 4, nope_embeding=True, num_layers=2)
 
-mngr = make_ckpt_manager('save/oau_2l_1')
+@dataclass
+class Case:
+    name: str
+    config: TransformerConfig
+    save_dir: str
+    train_iters: int = 30_000
+    res: dict = field(default_factory=dict)
+    ds_kwargs: dict = field(default_factory=dict)
+    fine_tune_split: float | None = None
+
+# <codecell>
+with open('save/cases.pkl', 'rb') as fp:
+    all_cases = pickle.load(fp)
+
+case = all_cases[0]
+config = case.config
+
+ds, config = CopyDataset.from_config(config)
+save_path = case.save_dir
+
+# <codecell>
+
+mngr = make_ckpt_manager(save_path)
 best_step = mngr.best_step()
 print('BEST ITER', best_step)
 
@@ -23,7 +47,7 @@ raw_state = r['state']
 params = raw_state['params']
 
 # <codecell>
-pred, _ = predict([3, 4, 5, 6, 7, 8, 9, 10, 1], params, config)
+pred, _ = predict_no_lab([3, 11, 13, 6, 7, 12, 1], params, config)
 pred
 
 # <codecell>
@@ -157,8 +181,8 @@ def plot_sequence(in_seq, params, config):
     fig.tight_layout()
 
 
-train_ds = CopyDataset(10, vocab_size=50)
-# plot_sequence([3, 5, 10, 20, 21, 30, 40, 1], params, config)
-plot_sequence([3, 20, 21, 22, 23, 24, 25, 26, 1], params, config)
-# plt.savefig('fig/att_oau_1l.png')
+train_ds = ds
+# plot_sequence([3, 6, 7, 12, 11, 13, 4, 5, 8, 9, 1], params, config)
+plot_sequence([3, 5, 8, 9, 6, 7,12, 11, 13, 4, 1], params, config)
+# plt.savefig('fig/att_cfg.png')
 # %%

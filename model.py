@@ -391,7 +391,7 @@ def make_ckpt_manager(save_dir):
     )
 
 
-def train(config: TransformerConfig, train_dl, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=None, print_every=1_000, save_dir='save/model'):
+def train(config: TransformerConfig, train_dl, init_params=None, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=None, print_every=1_000, save_dir='save/model'):
     if os.path.exists(save_dir):
         shutil.rmtree(save_dir)
 
@@ -411,7 +411,11 @@ def train(config: TransformerConfig, train_dl, eval_dl=None, eval_iters=1_000, l
     input_shape = (train_dl.batch_size, max_len)
     model = Transformer(config)
 
-    init_var = jax.jit(model.init)({'rng': global_rng, 'params': params_rng}, jnp.ones(input_shape, jnp.int32), labels=jnp.ones(input_shape, jnp.int32))
+    if init_params is None:
+        init_var = jax.jit(model.init)({'rng': global_rng, 'params': params_rng}, jnp.ones(input_shape, jnp.int32), labels=jnp.ones(input_shape, jnp.int32))
+        init_params = init_var['params']
+        del init_var
+
     opt = optax.adamw(lr)
 
     if config.freeze_embedding:
@@ -428,10 +432,9 @@ def train(config: TransformerConfig, train_dl, eval_dl=None, eval_iters=1_000, l
 
     state = train_state.TrainState.create(
         apply_fn=model.apply,
-        params=init_var['params'],
+        params=init_params,
         tx=optimizer
     )
-    del init_var
 
     rng, model_rng = jax.random.split(rng)
     train_metrics = []
@@ -548,7 +551,7 @@ def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = N
     if config.causal:
         if prompt[-1] != 1:
             prompt = list(prompt)
-            prompt.append(-1)
+            prompt.append(1)
 
         if config.max_item_label > 0:
             return predict_with_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
@@ -558,7 +561,7 @@ def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = N
         return predict_all(prompt, params, config, seed=seed)
 
 
-def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, enforce_max=True):
+def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, max_len=None):
     prompt = jnp.array(prompt).astype(jnp.int32)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
@@ -567,8 +570,7 @@ def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, enforce_ma
         seed = np.random.randint(1, 99999)
     rng = jax.random.PRNGKey(seed)
 
-    max_len = 999
-    if enforce_max:
+    if max_len is None:
         max_len = 2 * prompt.shape[1]
 
     it = range(max_len)
@@ -736,19 +738,27 @@ config = TransformerConfig(
 
     ds_generator_name='CfgGenerator',
     ds_generator_kwargs=FrozenDict({
-        'nt_lengths': tuple(np.arange(max_train_len) + 1),
+        'lengths': tuple(np.arange(max_train_len) + 1),
+        # 'lengths': max_train_len,
         't_lengths': tuple(np.arange(3) + 1),
         'sampling_strategy': 'zipf',
         'n_nonterminals': 2*max_train_len,
         'n_terminals': n_symbols
     }))
 
-train_ds, config = CopyDataset.from_config(config)
+train_ds, config = GenerativeDataset.from_config(config)
 train_dl = to_dataloader(train_ds, batch_size=32, pin_memory=True)
 
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
+                    n_iters=5_000, print_every=1_000, save_dir='scratch/save/tmp')
+
+train_ds, config = CopyDataset.from_config(config)
+train_dl = to_dataloader(train_ds, batch_size=32, pin_memory=True)
+
+# <codecell>
+state, info = train(config, train_dl, init_params=state.params, eval_dl=train_dl,
                     n_iters=10_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 plot_train_metrics(info)
@@ -761,10 +771,11 @@ r = mngr.restore(mngr.all_steps()[-2])
 raw_state = r['state']
 
 # %%
-inputs = [3, 9, 11, 6, 12, 8, 9, 4, 12, 1]  # TODO: test rigorously across different configurations
+inputs = [3, 9, 11, 12, 6, 7, 12, 8, 9, 4, 12, 1]
 # predict_with_lab(inputs, raw_state['params'], config)
-seq, info = predict(inputs, raw_state['params'], config)
+seq, info = predict_no_lab(inputs, raw_state['params'], config)
 seq
+# info['logits'][0]
 
 # info['logits']
 

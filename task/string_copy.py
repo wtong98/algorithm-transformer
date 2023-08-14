@@ -26,7 +26,7 @@ class BaseGenerator:
 class RandomGenerator(BaseGenerator):
     def __init__(self, lengths, alphabet_size=2,
              ordered=False, unique=False,
-             probs=None, sampling_strategy=None, 
+             probs=None, sampling_strategy='zipf', 
              seed=None):
 
         try:
@@ -78,10 +78,10 @@ class RandomGeneratorWithLabels(RandomGenerator):
 
 
 class CfgGenerator(BaseGenerator):
-    def __init__(self, nt_lengths, t_lengths=2, nt_ordered=True, 
+    def __init__(self, lengths, t_lengths=2, nt_ordered=True, 
                  n_nonterminals=5, n_terminals=10, 
                  sampling_strategy='zipf', seed=0) -> None:
-        self.nt_gen = RandomGenerator(nt_lengths, alphabet_size=n_nonterminals, 
+        self.nt_gen = RandomGenerator(lengths, alphabet_size=n_nonterminals, 
                                      ordered=nt_ordered, 
                                      unique=nt_ordered, 
                                      sampling_strategy=sampling_strategy, 
@@ -98,7 +98,7 @@ class CfgGenerator(BaseGenerator):
 
         return {'pattern': np.array(ts)}
     
-    def to_emb_idxs(self, start_idx):
+    def to_emb_idxs(self, start_idx=4):
         return {k : v + start_idx for k, v in self.nt_to_ts.items()}
 
 
@@ -206,7 +206,8 @@ class GenerativeDataset(IterableDataset):
 
         pred_mask = np.concatenate((
             [1] if self.bos else [],
-            1 * pattern_mask
+            1 * pattern_mask[:-1],
+            [0]  # ignore final token
         ))
 
         if item_labels is None:
@@ -244,7 +245,7 @@ if __name__ == '__main__':
     config = TransformerConfig(
         ds_generator_name='CfgGenerator',
         ds_generator_kwargs={
-            'nt_lengths': np.arange(5) + 1,
+            'lengths': np.arange(5) + 1,
         }
     )
 
