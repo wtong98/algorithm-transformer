@@ -35,6 +35,7 @@ config = case.config
 
 ds, config = CopyDataset.from_config(config)
 save_path = case.save_dir
+case.name
 
 # <codecell>
 
@@ -47,7 +48,7 @@ raw_state = r['state']
 params = raw_state['params']
 
 # <codecell>
-pred, _ = predict_no_lab([3, 11, 13, 6, 7, 12, 1], params, config)
+pred, _ = predict_no_lab([3, 11, 13, 12, 13, 12, 8, 1], params, config)
 pred
 
 # <codecell>
@@ -182,7 +183,7 @@ def plot_sequence(in_seq, params, config):
 
 
 train_ds = ds
-# plot_sequence([3, 6, 7, 12, 11, 13, 4, 5, 8, 9, 1], params, config)
-plot_sequence([3, 5, 8, 9, 6, 7,12, 11, 13, 4, 1], params, config)
-# plt.savefig('fig/att_cfg.png')
+# plot_sequence([3, 759, 954, 38, 148, 253, 315, 413, 89, 31, 1], params, config)
+plot_sequence([3, 7, 8, 4, 4, 5, 5, 5, 4, 1], params, config)
+# plt.savefig('fig/att_cfg_1000_sym_autocomplete.png')
 # %%

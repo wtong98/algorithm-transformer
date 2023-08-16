@@ -86,7 +86,7 @@ n_symbols = 10
 test_every = 1
 n_test_examples = 32
 max_train_len = 5
-max_test_len = 20
+max_test_len = 15
 max_item_label = 50
 
 
@@ -102,9 +102,9 @@ class Case:
 
 common_ds_kwargs = FrozenDict(
     lengths=tuple(range(1, max_train_len+1)),
-    t_lengths=tuple(range(1, 4)),
     n_nonterminals=max_test_len,
-    n_terminals=n_symbols
+    # n_terminals=n_symbols
+    t_lengths=3
 )
 
 
@@ -128,28 +128,35 @@ for i in range(n_iters):
         # Case('Random (Relative)', config=TransformerConfig(
         #     rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
 
-        Case('CFG', config=TransformerConfig(
+        # Case('5 Sym', config=TransformerConfig(
+        #     nope_embeding=True,
+        #     ds_generator_name='CfgGenerator',
+        #     ds_generator_kwargs=FrozenDict(n_terminals=5, **common_ds_kwargs)
+        # ), save_dir=f'cfg_5term_{i}'),
+
+        # Case('10 Sym', config=TransformerConfig(
+        #     nope_embeding=True,
+        #     ds_generator_name='CfgGenerator',
+        #     ds_generator_kwargs=FrozenDict(n_terminals=10, **common_ds_kwargs)
+        # ), save_dir=f'cfg_10term_{i}'),
+
+        # Case('50 Sym', config=TransformerConfig(
+        #     nope_embeding=True,
+        #     ds_generator_name='CfgGenerator',
+        #     ds_generator_kwargs=FrozenDict(n_terminals=50, **common_ds_kwargs)
+        # ), save_dir=f'cfg_50term_{i}'),
+
+        Case('100 Sym', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=common_ds_kwargs
-        ), save_dir=f'cfg_{i}'),
+            ds_generator_kwargs=FrozenDict(n_terminals=100, **common_ds_kwargs)
+        ), save_dir=f'cfg_100term_{i}'),
 
-        Case('CFG (fine-tuned)', config=TransformerConfig(
+        Case('1000 Sym', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=common_ds_kwargs
-        ), fine_tune_split=0.2, save_dir=f'cfg_ft_{i}'),
-
-        Case('Ord and Uniq', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(
-                lengths=common_ds_kwargs['lengths'],
-                alphabet_size=max_test_len,
-                ordered=True,
-                unique=True
-            )
-        ), save_dir=f'oau_{i}')
+            ds_generator_kwargs=FrozenDict(n_terminals=1000, **common_ds_kwargs)
+        ), save_dir=f'cfg_1000term_{i}'),
     ])
 
 for case in all_cases:
@@ -200,7 +207,7 @@ for case in all_cases:
     
 
 # <codecell>
-with open('save/cases.pkl', 'wb') as fp:
+with open('save/cases_long.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
 if scratch_dir is not None:
@@ -247,7 +254,7 @@ sns.move_legend(g, 'lower left')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_cfg_pretrain.png')
+plt.savefig('fig/gen_cfg_symbols_long.png')
 
 
 # %%

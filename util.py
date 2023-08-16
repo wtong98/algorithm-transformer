@@ -26,6 +26,7 @@ class TransformerConfig:
     mlp_dim: int = 128
     max_len: int = 256
     causal: bool = True
+    non_causal_prompt: bool = False
     include_bos: bool = True
     ds_generator_name: str = 'RandomGenerator'
     ds_generator_kwargs: FrozenDict = struct.field(default_factory=FrozenDict)
