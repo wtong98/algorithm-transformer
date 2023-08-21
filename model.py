@@ -334,6 +334,7 @@ class Transformer(nn.Module):
     @nn.compact
     def __call__(self,
                 inputs,
+                prompt_mask=None,
                 labels=None):
 
         config = self.config
@@ -362,6 +363,13 @@ class Transformer(nn.Module):
             decoder_mask = nn.combine_masks(
                 decoder_mask,
                 nn.make_causal_mask(inputs))
+
+        if config.non_causal_prompt and prompt_mask is not None:
+            not_decoder_mask = nn.combine_masks(
+                jnp.logical_not(decoder_mask),
+                jnp.logical_not(nn.make_attention_mask(prompt_mask > 0, prompt_mask > 0))
+            )
+            decoder_mask = jnp.logical_not(not_decoder_mask)
 
         # Target-Input Decoder
         for _ in range(config.num_layers):
@@ -487,8 +495,8 @@ def print_metric(step, m, is_eval=False):
 
 @functools.partial(jax.jit, static_argnames=('config', 'report_metrics'))
 def train_step(state, batch, config, rng=None, report_metrics=False):
-    train_keys = ['inputs', 'outputs', 'labels', 'mask']
-    inputs, outputs, labels, mask = [batch.get(k, None) for k in train_keys]
+    train_keys = ['inputs', 'outputs', 'labels', 'mask', 'prompt_mask']
+    inputs, outputs, labels, mask, prompt_mask = [batch.get(k, None) for k in train_keys]
     # print('LABS', labels)
     
     rng = jax.random.fold_in(rng, state.step)
@@ -498,6 +506,7 @@ def train_step(state, batch, config, rng=None, report_metrics=False):
         logits = Transformer(config).apply(
             {'params': params},
             inputs,
+            prompt_mask=prompt_mask,
             labels=labels,
             rngs={'rng': global_rng}
         )
@@ -733,33 +742,27 @@ max_item_label = 25
 max_train_len = 5
 
 config = TransformerConfig(
-    num_layers=6,
-    nope_embeding=True,
+    num_layers=3,
+    # rel_pos_att=True,
+    non_causal_prompt=True,
 
     ds_generator_name='CfgGenerator',
     ds_generator_kwargs=FrozenDict({
         'lengths': tuple(np.arange(max_train_len) + 1),
         # 'lengths': max_train_len,
-        't_lengths': tuple(np.arange(3) + 1),
+        't_lengths': 3,
         'sampling_strategy': 'zipf',
         'n_nonterminals': 2*max_train_len,
         'n_terminals': n_symbols
     }))
 
-train_ds, config = GenerativeDataset.from_config(config)
+train_ds, config = CopyDataset.from_config(config)
 train_dl = to_dataloader(train_ds, batch_size=32, pin_memory=True)
 
 
 # <codecell>
 state, info = train(config, train_dl, eval_dl=train_dl,
-                    n_iters=5_000, print_every=1_000, save_dir='scratch/save/tmp')
-
-train_ds, config = CopyDataset.from_config(config)
-train_dl = to_dataloader(train_ds, batch_size=32, pin_memory=True)
-
-# <codecell>
-state, info = train(config, train_dl, init_params=state.params, eval_dl=train_dl,
-                    n_iters=10_000, print_every=1_000, save_dir='scratch/save/tmp')
+                    n_iters=20_000, print_every=1_000, save_dir='scratch/save/tmp')
 
 plot_train_metrics(info)
 # <codecell>

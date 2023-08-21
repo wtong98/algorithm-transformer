@@ -102,11 +102,11 @@ class CfgGenerator(BaseGenerator):
         return {k : v + start_idx for k, v in self.nt_to_ts.items()}
 
 
-def from_config(ds_class, config, unify_config=True):
+def from_config(ds_class, config: TransformerConfig, unify_config=True):
     mod = sys.modules[__name__]
     gen_class = getattr(mod, config.ds_generator_name)
     gen = gen_class(**config.ds_generator_kwargs)
-    ds = ds_class(gen, bos=config.include_bos)
+    ds = ds_class(gen, bos=config.include_bos, prompt_mask=config.non_causal_prompt)
 
     if unify_config:
         config = config.replace(vocab_size=ds.n_symbols)
@@ -117,9 +117,10 @@ def from_config(ds_class, config, unify_config=True):
 
 
 class CopyDataset(IterableDataset):
-    def __init__(self, generator: BaseGenerator, bos=True) -> None:
+    def __init__(self, generator: BaseGenerator, bos=True, prompt_mask=False) -> None:
         self.gen = generator
         self.bos = bos
+        self.prompt_mask = prompt_mask
 
         self.vocab_toks = [chr(start_char + i) for i in range(self.gen.alphabet_size)]
         self.idx_to_tok = [
@@ -143,7 +144,6 @@ class CopyDataset(IterableDataset):
         out = next(self.gen)
         pattern = out.get('pattern') + self.start_symbol_idx
         item_labels = out.get('labels')
-        length = len(pattern)
 
         pattern_mask = np.ones(len(pattern))
         xs = np.concatenate((
@@ -162,11 +162,20 @@ class CopyDataset(IterableDataset):
             [0]                # ignored final prediction
         ))
 
-        if item_labels is None:
-            item_labels = np.zeros(length)
-        item_labels = np.concatenate(([0] if self.bos else [], item_labels, [0], item_labels))  # reflect copy operation
+        if item_labels is not None:
+            item_labels = np.concatenate(([0] if self.bos else [], item_labels, [0], item_labels))  # reflect copy operation
+        
+        pred_prompt_mask = None
+        if self.prompt_mask:
+            pred_prompt_mask = np.concatenate((
+                [1] if self.bos else[],
+                pattern_mask,
+                [1],
+                0 * pattern_mask,
+                [0]
+            ))
 
-        return xs, item_labels, pred_mask
+        return xs, item_labels, pred_mask, pred_prompt_mask
 
 
 class GenerativeDataset(IterableDataset):
@@ -217,23 +226,20 @@ class GenerativeDataset(IterableDataset):
         return xs, item_labels, pred_mask
         
 
-
 def pad_examples(exs):
-    xs, item_labels, masks = zip(*exs)
-    max_len = np.max([len(x) for x in xs])
+    items = list(zip(*exs))
+    max_len = np.max([len(x) for x in items[0]])
+    padded = np.zeros((len(items), len(exs), max_len))
+    for i, item_set in enumerate(items):
+        for j, item in enumerate(item_set):
+            if item is not None:
+                padded[i,j,:len(item)] = item
 
-    xs_pad = np.zeros((len(exs), max_len))
-    labels_pad = np.zeros((len(exs), max_len))
-    mask_pad = np.zeros((len(exs), max_len))
-    for i, (x, l, m) in enumerate(zip(xs, item_labels, masks)):
-        xs_pad[i,:len(x)] = x
-        labels_pad[i,:len(l)] = l
-        mask_pad[i,:len(m)] = m
-    
     return {
-        'inputs': jnp.array(xs_pad).astype('int32'),
-        'labels': jnp.array(labels_pad).astype('int32'),
-        'mask': jnp.array(mask_pad)
+        'inputs': jnp.array(padded[0]).astype('int32'),
+        'labels': jnp.array(padded[1]).astype('int32'),
+        'mask': jnp.array(padded[2]),
+        'prompt_mask': jnp.array(padded[3])
     }
 
 
@@ -246,10 +252,11 @@ if __name__ == '__main__':
         ds_generator_name='CfgGenerator',
         ds_generator_kwargs={
             'lengths': np.arange(5) + 1,
-        }
+        },
+        non_causal_prompt=True
     )
 
-    ds, config = GenerativeDataset.from_config(config)
+    ds, config = CopyDataset.from_config(config)
     
     # TODO test generative dataset
     dl = to_dataloader(ds, batch_size=8)

@@ -30,7 +30,7 @@ class Case:
 with open('save/cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
-case = all_cases[0]
+case = all_cases[4]
 config = case.config
 
 ds, config = CopyDataset.from_config(config)
@@ -183,7 +183,7 @@ def plot_sequence(in_seq, params, config):
 
 
 train_ds = ds
-# plot_sequence([3, 759, 954, 38, 148, 253, 315, 413, 89, 31, 1], params, config)
-plot_sequence([3, 7, 8, 4, 4, 5, 5, 5, 4, 1], params, config)
-# plt.savefig('fig/att_cfg_1000_sym_autocomplete.png')
+plot_sequence([3, 759, 954, 38, 1], params, config)
+# plot_sequence([3, 7, 8, 4, 4, 5, 5, 5, 4, 1], params, config)
+plt.savefig('fig/att_cfg_1000_sym_tuple.png')
 # %%
