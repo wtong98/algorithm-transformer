@@ -9,6 +9,7 @@ from typing import Callable, Optional
 from flax import linen as nn, struct
 from flax.core.frozen_dict import FrozenDict
 from flax.training.common_utils import stack_forest
+from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions, PyTreeCheckpointer
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -80,3 +81,26 @@ def plot_train_metrics(info, save_path=None):
 
     if save_path is not None:
         plt.savefig(save_path)
+
+
+def make_ckpt_manager(save_dir):
+    return CheckpointManager(
+        save_dir, 
+        PyTreeCheckpointer(),
+        options=CheckpointManagerOptions(
+                keep_period=1,
+                best_fn=lambda x: x,
+                best_mode='min')
+        
+    )
+
+
+def load_params(save_dir, step=None):
+    mngr = make_ckpt_manager(save_dir)
+    if step is None:
+        step = mngr.best_step()
+
+    r = mngr.restore(step)
+    raw_state = r['state']
+    params = raw_state['params']
+    return params

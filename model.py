@@ -35,7 +35,6 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-from orbax.checkpoint import CheckpointManager, CheckpointManagerOptions, PyTreeCheckpointer
 import optax
 
 from tqdm import tqdm
@@ -385,18 +384,6 @@ class Transformer(nn.Module):
             bias_init=config.bias_init(),
             name='LogitDense')(y)
         return logits
-
-
-def make_ckpt_manager(save_dir):
-    return CheckpointManager(
-        save_dir, 
-        PyTreeCheckpointer(),
-        options=CheckpointManagerOptions(
-                keep_period=1,
-                best_fn=lambda x: x,
-                best_mode='min')
-        
-    )
 
 
 def train(config: TransformerConfig, train_dl, init_params=None, eval_dl=None, eval_iters=1_000, lr=5e-5, n_iters=10_000, seed=None, print_every=1_000, save_dir='save/model'):
