@@ -78,9 +78,9 @@ class RandomGeneratorWithLabels(RandomGenerator):
 
 
 class CfgGenerator(BaseGenerator):
-    def __init__(self, lengths, t_lengths=2, nt_ordered=True, 
+    def __init__(self, lengths, t_lengths=3, nt_ordered=True, 
                  n_nonterminals=5, n_terminals=10, 
-                 sampling_strategy='zipf', seed=0) -> None:
+                 sampling_strategy='zipf', compress=True, seed=0) -> None:
         self.nt_gen = RandomGenerator(lengths, alphabet_size=n_nonterminals, 
                                      ordered=nt_ordered, 
                                      unique=nt_ordered, 
@@ -89,7 +89,26 @@ class CfgGenerator(BaseGenerator):
 
         t_gen = RandomGenerator(t_lengths, alphabet_size=n_terminals, seed=seed+1)
         self.nt_to_ts = {nt: next(t_gen)['pattern'] for nt in range(n_nonterminals)}
+
+        if compress:
+            self.nt_to_ts = CfgGenerator._remap(self.nt_to_ts)
         self.alphabet_size = n_terminals
+    
+    @staticmethod
+    def _remap(nt_to_ts):
+        tok_counter = 0
+        compressed_map = {}
+        
+        for nt in nt_to_ts:
+            for i, t in enumerate(nt_to_ts[nt]):
+                if t not in compressed_map:
+                    compressed_map[t] = tok_counter
+                    tok_counter += 1
+
+                t = compressed_map[t]
+                nt_to_ts[nt][i] = t
+                    
+        return nt_to_ts
     
     def __next__(self):
         nts = next(self.nt_gen)['pattern']
@@ -252,6 +271,7 @@ if __name__ == '__main__':
         ds_generator_name='CfgGenerator',
         ds_generator_kwargs={
             'lengths': np.arange(5) + 1,
+            'n_terminals': 1000,
         },
         non_causal_prompt=True
     )

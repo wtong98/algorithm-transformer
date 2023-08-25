@@ -81,7 +81,7 @@ def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
     return n_correct / n_examples, fails
 
 
-n_iters = 3
+n_iters = 1
 n_symbols = 10
 test_every = 1
 n_test_examples = 32
@@ -95,7 +95,7 @@ class Case:
     name: str
     config: TransformerConfig
     save_dir: str
-    train_iters: int = 30_000
+    train_iters: int = 10_000
     res: dict = field(default_factory=dict)
     ds_kwargs: dict = field(default_factory=dict)
     fine_tune_split: float | None = None
@@ -146,17 +146,24 @@ for i in range(n_iters):
         #     ds_generator_kwargs=FrozenDict(n_terminals=50, **common_ds_kwargs)
         # ), save_dir=f'cfg_50term_{i}'),
 
-        Case('100 Sym', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(n_terminals=100, **common_ds_kwargs)
-        ), save_dir=f'cfg_100term_{i}'),
+        # Case('100 Sym', config=TransformerConfig(
+        #     nope_embeding=True,
+        #     ds_generator_name='CfgGenerator',
+        #     ds_generator_kwargs=FrozenDict(n_terminals=100, **common_ds_kwargs)
+        # ), save_dir=f'cfg_100term_{i}'),
 
-        Case('1000 Sym', config=TransformerConfig(
+        # Case('1000 Sym', config=TransformerConfig(
+        #     nope_embeding=True,
+        #     ds_generator_name='CfgGenerator',
+        #     ds_generator_kwargs=FrozenDict(n_terminals=1000, **common_ds_kwargs)
+        # ), save_dir=f'cfg_1000term_{i}'),
+
+        Case('base', config=TransformerConfig(
             nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(n_terminals=1000, **common_ds_kwargs)
-        ), save_dir=f'cfg_1000term_{i}'),
+            num_layers=3,
+            ds_generator_name='RandomGenerator',
+            ds_generator_kwargs=FrozenDict(lengths=(1,2,3), unique=True, ordered=True, alphabet_size=3)
+        ), save_dir='base')
     ])
 
 for case in all_cases:
@@ -164,9 +171,9 @@ for case in all_cases:
 
 # <codecell>
 for case in all_cases:
-    if Path(case.save_dir).exists():
-        print('SKIPPING', case.name)
-        continue
+    # if Path(case.save_dir).exists():
+    #     print('SKIPPING', case.name)
+    #     continue
 
     print('TRAINING', case.name)
 
@@ -207,7 +214,7 @@ for case in all_cases:
     
 
 # <codecell>
-with open('save/cases_long.pkl', 'wb') as fp:
+with open('save/cases.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
 if scratch_dir is not None:

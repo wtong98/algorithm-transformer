@@ -126,10 +126,10 @@ def get_attn_weights(seq, params, config, labels=None, intm_name='attention_weig
     if labels is not None:
         labels = labels.reshape(1, -1)
 
+    _, intm = m.apply({'params': params}, seq.reshape(1, -1), labels=labels, mutable='intermediates')
+
     for i in range(config.num_layers):
         m = Transformer(config)
-        _, intm = m.apply({'params': params}, seq.reshape(
-            1, -1), labels=labels, mutable='intermediates')
         attn_weights = intm['intermediates'][f'TransformerBlock_{i}'][
             'SingleHeadSelfAttention_0'][intm_name][0]
         all_weights.append(attn_weights.squeeze())
