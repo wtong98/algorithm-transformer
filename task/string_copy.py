@@ -91,7 +91,7 @@ class CfgGenerator(BaseGenerator):
         self.nt_to_ts = {nt: next(t_gen)['pattern'] for nt in range(n_nonterminals)}
 
         if compress:
-            self.nt_to_ts = CfgGenerator._remap(self.nt_to_ts)
+            self.nt_to_ts, n_terminals = CfgGenerator._remap(self.nt_to_ts)
         self.alphabet_size = n_terminals
     
     @staticmethod
@@ -108,7 +108,7 @@ class CfgGenerator(BaseGenerator):
                 t = compressed_map[t]
                 nt_to_ts[nt][i] = t
                     
-        return nt_to_ts
+        return nt_to_ts, tok_counter
     
     def __next__(self):
         nts = next(self.nt_gen)['pattern']

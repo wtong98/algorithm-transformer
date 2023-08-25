@@ -95,7 +95,7 @@ class Case:
     name: str
     config: TransformerConfig
     save_dir: str
-    train_iters: int = 10_000
+    train_iters: int = 30_000
     res: dict = field(default_factory=dict)
     ds_kwargs: dict = field(default_factory=dict)
     fine_tune_split: float | None = None
@@ -128,11 +128,11 @@ for i in range(n_iters):
         # Case('Random (Relative)', config=TransformerConfig(
         #     rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
 
-        # Case('5 Sym', config=TransformerConfig(
-        #     nope_embeding=True,
-        #     ds_generator_name='CfgGenerator',
-        #     ds_generator_kwargs=FrozenDict(n_terminals=5, **common_ds_kwargs)
-        # ), save_dir=f'cfg_5term_{i}'),
+        Case('5 Sym', config=TransformerConfig(
+            nope_embeding=True,
+            ds_generator_name='CfgGenerator',
+            ds_generator_kwargs=FrozenDict(n_terminals=5, **common_ds_kwargs)
+        ), save_dir=f'cfg_5term_{i}'),
 
         # Case('10 Sym', config=TransformerConfig(
         #     nope_embeding=True,
@@ -152,18 +152,18 @@ for i in range(n_iters):
         #     ds_generator_kwargs=FrozenDict(n_terminals=100, **common_ds_kwargs)
         # ), save_dir=f'cfg_100term_{i}'),
 
-        # Case('1000 Sym', config=TransformerConfig(
-        #     nope_embeding=True,
-        #     ds_generator_name='CfgGenerator',
-        #     ds_generator_kwargs=FrozenDict(n_terminals=1000, **common_ds_kwargs)
-        # ), save_dir=f'cfg_1000term_{i}'),
-
-        Case('base', config=TransformerConfig(
+        Case('1000 Sym', config=TransformerConfig(
             nope_embeding=True,
-            num_layers=3,
-            ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(lengths=(1,2,3), unique=True, ordered=True, alphabet_size=3)
-        ), save_dir='base')
+            ds_generator_name='CfgGenerator',
+            ds_generator_kwargs=FrozenDict(n_terminals=1000, **common_ds_kwargs)
+        ), save_dir=f'cfg_1000term_{i}'),
+
+        # Case('base', config=TransformerConfig(
+        #     nope_embeding=True,
+        #     num_layers=3,
+        #     ds_generator_name='RandomGenerator',
+        #     ds_generator_kwargs=FrozenDict(lengths=(1,2,3), unique=True, ordered=True, alphabet_size=3)
+        # ), save_dir='base')
     ])
 
 for case in all_cases:
@@ -261,7 +261,7 @@ sns.move_legend(g, 'lower left')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_cfg_symbols_long.png')
+# plt.savefig('fig/gen_cfg_symbols_long.png')
 
 
 # %%

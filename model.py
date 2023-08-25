@@ -723,24 +723,32 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
 
 # <codecell>
-'''
+# '''
 n_symbols = 10
 max_item_label = 25
 max_train_len = 5
 
 config = TransformerConfig(
     num_layers=3,
-    # rel_pos_att=True,
+    rel_pos_att=True,
     non_causal_prompt=True,
 
-    ds_generator_name='CfgGenerator',
+    # ds_generator_name='CfgGenerator',
+    # ds_generator_kwargs=FrozenDict({
+    #     'lengths': tuple(np.arange(max_train_len) + 1),
+    #     # 'lengths': max_train_len,
+    #     't_lengths': 3,
+    #     'sampling_strategy': 'zipf',
+    #     'n_nonterminals': 2*max_train_len,
+    #     'n_terminals': n_symbols
+    # }))
+
+    ds_generator_name='RandomGenerator',
     ds_generator_kwargs=FrozenDict({
         'lengths': tuple(np.arange(max_train_len) + 1),
-        # 'lengths': max_train_len,
-        't_lengths': 3,
-        'sampling_strategy': 'zipf',
-        'n_nonterminals': 2*max_train_len,
-        'n_terminals': n_symbols
+        'unique': True,
+        'ordered': True,
+        'alphabet_size': n_symbols
     }))
 
 train_ds, config = CopyDataset.from_config(config)

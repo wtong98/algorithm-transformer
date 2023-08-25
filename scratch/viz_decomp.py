@@ -25,8 +25,8 @@ class Case:
     fine_tune_split: float | None = None
 
 
-def plot_path(seq, att_mat, logit_mat):
-    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+def plot_path(seq, att_mat, logit_mat, figsize=(18, 6)):
+    fig, axs = plt.subplots(1, 3, figsize=figsize)
 
     im = axs[0].imshow(att_mat.T, vmax=1, vmin=0)
     axs[0].set_xticks(np.arange(len(seq)))
@@ -58,27 +58,35 @@ def plot_path(seq, att_mat, logit_mat):
     fig.tight_layout()
 
 # <codecell>
-subdir = 'copy_cfg_syms/'
+subdir = ''
 with open(f'save/{subdir}cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
-case = all_cases[0]
+case = all_cases[1]
 config = case.config
 
 ds, config = CopyDataset.from_config(config)
 name = Path(case.save_dir).name
 save_dir = f'save/{subdir}{name}'
 
+case.name
+
 # <codecell>
 params = load_params(save_dir)
 jax.tree_map(lambda x: x.shape, params)
 
 # <codecell>
-save_fig_dir = Path('fig/test')
+inputs = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1]
+
+seq, info = predict_no_lab(inputs, params, config)
+seq
+
+# <codecell>
+save_fig_dir = Path('fig/1k_sym')
 if not save_fig_dir.exists():
     save_fig_dir.mkdir()
 
-seq = [3, 4, 5, 6, 1, 4, 5, 6]
+seq = seq
 
 all_flags = []
 for idx in range(2**config.num_layers):
@@ -114,7 +122,7 @@ X = (X_one_hot @ W_emb).T
 all_logits = []
 all_layer_names = []
 
-for flag in all_flags:
+for flag in tqdm(all_flags):
     idx = idxs[flag]
     pre = [W_out.T] + [all_V[i].T for i in reversed(idx)] + [X]
     post = [all_A[i].T for i in idx]
@@ -128,13 +136,12 @@ for flag in all_flags:
         post = post_diff * [np.eye(X.shape[1])] + post
     post_mat = jnp.linalg.multi_dot(post)
 
-    # plt.clf()
-    # plot_path(seq, post_mat, pre_mat)
-    # plt.savefig(save_fig_dir / f"path_{layers}")
-    # plt.close()
+    plt.clf()
+    plot_path(seq, post_mat, pre_mat, figsize=(24, 6))
+    plt.savefig(save_fig_dir / f"path_{layers}")
+    plt.close()
 
     all_logits.append(pre_mat @ post_mat)
-    # break
 
 all_logits = jnp.stack(all_logits)
 all_logits.shape
@@ -144,13 +151,15 @@ assert jnp.all(jnp.isclose(logits.squeeze().T, accum_logits, atol=1e-4))
 print('success!')
 
 # %%
-for i, tok in enumerate(seq):
+max_tok = max(seq)
+
+for i, tok in tqdm(enumerate(seq)):
     plt.clf()
 
-    plt.gcf().set_size_inches(4, 20)
-    plt.imshow(all_logits[:,:,i])
+    plt.gcf().set_size_inches(4, 16)
+    plt.imshow(all_logits[:,:(max_tok+1),i])
     ax = plt.gca()
-    ax.set_xticks(np.arange(9))
+    ax.set_xticks(np.arange(max_tok + 1))
     # ax.set_xticklabels(seq)
     ax.set_yticks(np.arange(len(all_layer_names)))
     ax.set_yticklabels(all_layer_names)
