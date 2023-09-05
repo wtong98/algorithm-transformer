@@ -723,7 +723,7 @@ def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examp
 
 
 # <codecell>
-# '''
+'''
 n_symbols = 10
 max_item_label = 25
 max_train_len = 5

@@ -81,7 +81,7 @@ def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
     return n_correct / n_examples, fails
 
 
-n_iters = 1
+n_iters = 3
 n_symbols = 10
 test_every = 1
 n_test_examples = 32
@@ -128,11 +128,17 @@ for i in range(n_iters):
         # Case('Random (Relative)', config=TransformerConfig(
         #     rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
 
-        Case('5 Sym', config=TransformerConfig(
+        Case('5 Sym (ordered)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(n_terminals=5, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(n_terminals=5, nt_ordered=True, **common_ds_kwargs)
         ), save_dir=f'cfg_5term_{i}'),
+
+        Case('5 Sym (scrambled)', config=TransformerConfig(
+            nope_embeding=True,
+            ds_generator_name='CfgGenerator',
+            ds_generator_kwargs=FrozenDict(n_terminals=5, nt_ordered=False, **common_ds_kwargs)
+        ), save_dir=f'cfg_5term_{i}_scram'),
 
         # Case('10 Sym', config=TransformerConfig(
         #     nope_embeding=True,
@@ -152,11 +158,17 @@ for i in range(n_iters):
         #     ds_generator_kwargs=FrozenDict(n_terminals=100, **common_ds_kwargs)
         # ), save_dir=f'cfg_100term_{i}'),
 
-        Case('1000 Sym', config=TransformerConfig(
+        Case('1000 Sym (ordered)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(n_terminals=1000, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(n_terminals=1000, nt_ordered=True, **common_ds_kwargs)
         ), save_dir=f'cfg_1000term_{i}'),
+
+        Case('1000 Sym (scrambled)', config=TransformerConfig(
+            nope_embeding=True,
+            ds_generator_name='CfgGenerator',
+            ds_generator_kwargs=FrozenDict(n_terminals=1000, nt_ordered=False, **common_ds_kwargs)
+        ), save_dir=f'cfg_1000term_{i}_scram'),
 
         # Case('base', config=TransformerConfig(
         #     nope_embeding=True,
@@ -261,7 +273,7 @@ sns.move_legend(g, 'lower left')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-# plt.savefig('fig/gen_cfg_symbols_long.png')
+plt.savefig('fig/gen_cfg_scramble.png')
 
 
 # %%

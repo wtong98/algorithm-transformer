@@ -78,12 +78,12 @@ class RandomGeneratorWithLabels(RandomGenerator):
 
 
 class CfgGenerator(BaseGenerator):
-    def __init__(self, lengths, t_lengths=3, nt_ordered=True, 
+    def __init__(self, lengths, t_lengths=3, nt_ordered=True, nt_unique=True,
                  n_nonterminals=5, n_terminals=10, 
                  sampling_strategy='zipf', compress=True, seed=0) -> None:
         self.nt_gen = RandomGenerator(lengths, alphabet_size=n_nonterminals, 
                                      ordered=nt_ordered, 
-                                     unique=nt_ordered, 
+                                     unique=nt_unique, 
                                      sampling_strategy=sampling_strategy, 
                                      seed=None) # NOTE: high-level generation will be random
 
@@ -272,6 +272,7 @@ if __name__ == '__main__':
         ds_generator_kwargs={
             'lengths': np.arange(5) + 1,
             'n_terminals': 1000,
+            'nt_ordered': False
         },
         non_causal_prompt=True
     )
