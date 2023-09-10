@@ -79,7 +79,8 @@ class RandomGeneratorWithLabels(RandomGenerator):
 
 class CfgGenerator(BaseGenerator):
     def __init__(self, lengths, t_lengths=3, nt_ordered=True, nt_unique=True,
-                 n_nonterminals=5, n_terminals=10, 
+                 n_nonterminals=5, n_terminals=10,
+                 within_overlap_prob=None, cross_overlap_prob=None,
                  sampling_strategy='zipf', compress=True, seed=0) -> None:
         self.nt_gen = RandomGenerator(lengths, alphabet_size=n_nonterminals, 
                                      ordered=nt_ordered, 
@@ -87,8 +88,35 @@ class CfgGenerator(BaseGenerator):
                                      sampling_strategy=sampling_strategy, 
                                      seed=None) # NOTE: high-level generation will be random
 
-        t_gen = RandomGenerator(t_lengths, alphabet_size=n_terminals, seed=seed+1)
-        self.nt_to_ts = {nt: next(t_gen)['pattern'] for nt in range(n_nonterminals)}
+        self.within_overlap_prob = within_overlap_prob
+        self.cross_overlap_prob = cross_overlap_prob
+        rng = np.random.default_rng(seed=seed+1)
+
+        
+        self.nt_to_ts = {}
+        t_gen = RandomGenerator(t_lengths, alphabet_size=n_terminals, seed=seed+2)
+
+        # first pass: within-tuple duplicates
+        for nt in range(n_nonterminals):
+            proposal = next(t_gen)['pattern']
+            make_same_idxs = rng.binomial(n=1, p=self.within_overlap_prob or 0, size=len(proposal)).astype(bool)
+            make_same_idxs = make_same_idxs.astype(bool)
+            choices = proposal[make_same_idxs]
+            if len(choices) > 0:
+                val = rng.choice(choices)
+                proposal[make_same_idxs] = val
+
+            self.nt_to_ts[nt] = proposal
+        
+        # second pass: cross-tuple duplicates
+        for nt, tup in self.nt_to_ts.items():
+            n_choices = rng.binomial(n=len(tup), p=self.cross_overlap_prob or 0)
+            if n_choices > 0:
+                for idx in rng.choice(len(tup), size=n_choices, replace=True):
+                    other_nt = rng.choice([sym for sym in self.nt_to_ts.keys() if sym != nt])
+                    other_t = rng.choice(self.nt_to_ts[other_nt])
+                    print(f'CONVERT {nt} --> {idx}: {other_t}')
+                    self.nt_to_ts[nt][idx] = other_t
 
         if compress:
             self.nt_to_ts, n_terminals = CfgGenerator._remap(self.nt_to_ts)
@@ -271,15 +299,26 @@ if __name__ == '__main__':
         ds_generator_name='CfgGenerator',
         ds_generator_kwargs={
             'lengths': np.arange(5) + 1,
-            'n_terminals': 1000,
-            'nt_ordered': False
+            't_lengths': 5,
+            'n_terminals': 100000,
+            'nt_ordered': False,
+            'n_nonterminals': 15,
+            'seed': np.random.randint(0, 999999),
+            'within_overlap_prob': 0,
+            'cross_overlap_prob': 0.3,
+            'compress': True,
         },
         non_causal_prompt=True
     )
-
+    # TODO: benchmark <-- STOPPED HERE
     ds, config = CopyDataset.from_config(config)
     
-    # TODO test generative dataset
     dl = to_dataloader(ds, batch_size=8)
-    print(next(iter(dl)))
+    # print(next(iter(dl)))
+    print(ds.gen.nt_to_ts)
 # %%
+# import math
+
+# n = 1000
+# k = 15 * 3
+# 1 - (math.factorial(n) / (n ** k * math.factorial(n - k)))
