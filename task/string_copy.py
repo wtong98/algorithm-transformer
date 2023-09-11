@@ -11,7 +11,7 @@ from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 
 import sys
 sys.path.append('../')
-from util import TransformerConfig
+from util import TransformerConfig, new_seed
 
 start_char = 97    # ASCII 97 corresponds to 'a'
 
@@ -81,7 +81,12 @@ class CfgGenerator(BaseGenerator):
     def __init__(self, lengths, t_lengths=3, nt_ordered=True, nt_unique=True,
                  n_nonterminals=5, n_terminals=10,
                  within_overlap_prob=None, cross_overlap_prob=None,
-                 sampling_strategy='zipf', compress=True, seed=0) -> None:
+                 sampling_strategy='zipf', compress=True, seed=None) -> None:
+        
+        if seed == None:
+            seed = new_seed()
+        print('info: setting seed', seed)
+
         self.nt_gen = RandomGenerator(lengths, alphabet_size=n_nonterminals, 
                                      ordered=nt_ordered, 
                                      unique=nt_unique, 
@@ -115,7 +120,6 @@ class CfgGenerator(BaseGenerator):
                 for idx in rng.choice(len(tup), size=n_choices, replace=True):
                     other_nt = rng.choice([sym for sym in self.nt_to_ts.keys() if sym != nt])
                     other_t = rng.choice(self.nt_to_ts[other_nt])
-                    print(f'CONVERT {nt} --> {idx}: {other_t}')
                     self.nt_to_ts[nt][idx] = other_t
 
         if compress:
@@ -299,13 +303,13 @@ if __name__ == '__main__':
         ds_generator_name='CfgGenerator',
         ds_generator_kwargs={
             'lengths': np.arange(5) + 1,
-            't_lengths': 5,
+            't_lengths': 3,
             'n_terminals': 100000,
             'nt_ordered': False,
             'n_nonterminals': 15,
             'seed': np.random.randint(0, 999999),
             'within_overlap_prob': 0,
-            'cross_overlap_prob': 0.3,
+            'cross_overlap_prob': 1,
             'compress': True,
         },
         non_causal_prompt=True
