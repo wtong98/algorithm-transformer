@@ -79,12 +79,14 @@ class Case:
     ds_kwargs: dict = field(default_factory=dict)
     fine_tune_split: float | None = None
 
-common_ds_kwargs = FrozenDict(
-    lengths=tuple(range(1, max_train_len+1)),
-    n_nonterminals=max_test_len,
-    n_terminals=n_symbols,
-    t_lengths=3
-)
+def init_common_kwargs():
+    return FrozenDict(
+        lengths=tuple(range(1, max_train_len+1)),
+        n_nonterminals=max_test_len,
+        n_terminals=n_symbols,
+        t_lengths=3,
+        seed=new_seed()
+    )
 
 
 save_prefix = 'save/'
@@ -110,61 +112,61 @@ for i in range(n_iters):
         Case('Within (p=0)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(within_overlap_prob=0, **init_common_kwargs())
         ), save_dir=f'cfg_within_0_{i}'),
 
         Case('Within (p=0.25)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.25, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.25, **init_common_kwargs())
         ), save_dir=f'cfg_within_0.25_{i}'),
 
         Case('Within (p=0.5)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.5, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.5, **init_common_kwargs())
         ), save_dir=f'cfg_within_0.5_{i}'),
 
         Case('Within (p=0.75)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.75, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.75, **init_common_kwargs())
         ), save_dir=f'cfg_within_0.75_{i}'),
 
         Case('Within (p=1)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=1, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(within_overlap_prob=1, **init_common_kwargs)
         ), save_dir=f'cfg_within_1_{i}'),
 
         Case('Cross (p=0)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0, **init_common_kwargs())
         ), save_dir=f'cfg_cross_0_{i}'),
 
         Case('Cross (p=0.25)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.25, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.25, **init_common_kwargs())
         ), save_dir=f'cfg_cross_0.25_{i}'),
 
         Case('Cross (p=0.5)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.5, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.5, **init_common_kwargs())
         ), save_dir=f'cfg_cross_0.5_{i}'),
 
         Case('Cross (p=0.75)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.75, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.75, **init_common_kwargs())
         ), save_dir=f'cfg_cross_0.75_{i}'),
 
         Case('Cross (p=1)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=1, **common_ds_kwargs)
+            ds_generator_kwargs=FrozenDict(cross_overlap_prob=1, **init_common_kwargs())
         ), save_dir=f'cfg_cross_1_{i}'),
 
         # Case('base', config=TransformerConfig(
@@ -240,6 +242,9 @@ with open('save/cases.pkl', 'wb') as fp:
 if scratch_dir is not None:
     sys.exit(0)  # terminate now if on cluster
 
+# <codecell>
+with open('save/remote/cases.pkl', 'rb') as fp:
+    all_cases = pickle.load(fp)
 
 # <codecell>
 case = all_cases[1]
