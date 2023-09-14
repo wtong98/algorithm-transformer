@@ -21,9 +21,12 @@ from task.string_copy import *
 
 
 def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
-    kwargs = case.config.ds_generator_kwargs.copy({'lengths': length})
-    config = case.config.replace(ds_generator_kwargs=kwargs)
-    train_ds, config = CopyDataset.from_config(config)
+    kwargs = config.ds_generator_kwargs.copy({'lengths': length})
+    config = config.replace(ds_generator_kwargs=kwargs)
+    train_ds, config = CopyDataset.from_config(config, unify_config=False)
+
+    print('CONFIG', config)
+    print('PARAMS', jax.tree_map(lambda x: x.shape, params))
 
     n_correct = 0
     fails = []
@@ -136,7 +139,7 @@ for i in range(n_iters):
         Case('Within (p=1)', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=1, **init_common_kwargs)
+            ds_generator_kwargs=FrozenDict(within_overlap_prob=1, **init_common_kwargs())
         ), save_dir=f'cfg_within_1_{i}'),
 
         Case('Cross (p=0)', config=TransformerConfig(
@@ -182,9 +185,9 @@ for case in all_cases:
 
 # <codecell>
 for case in all_cases:
-    # if Path(case.save_dir).exists():
-    #     print('SKIPPING', case.name)
-    #     continue
+    if Path(case.save_dir).exists():
+        print('SKIPPING', case.name)
+        continue
 
     print('TRAINING', case.name)
 
@@ -220,6 +223,7 @@ for case in all_cases:
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
         acc, fails = evaluate_acc(ex_len, params, case.config, n_examples=n_test_examples)
         rand_config = case.config.replace(
+            vocab_size=params['Embed_0']['embedding'].shape[0],
             ds_generator_name='RandomGenerator',
             ds_generator_kwargs=FrozenDict({
                 'alphabet_size': 10   # NOTE: arbitrarily chosen
@@ -233,7 +237,6 @@ for case in all_cases:
 
 
     jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
-    
 
 # <codecell>
 with open('save/cases.pkl', 'wb') as fp:
@@ -272,7 +275,7 @@ with open('save/cases.pkl', 'rb') as fp:
 # <codecell>
 all_df = []
 for case in all_cases:
-    curr_df = pd.DataFrame(case.res['gen_acc'])
+    curr_df = pd.DataFrame(case.res['rand_acc'])
     curr_df['name'] = case.name
     all_df.append(curr_df)
 df = pd.concat(all_df)
@@ -286,7 +289,7 @@ sns.move_legend(g, 'lower left')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_cfg_scramble.png')
+plt.savefig('fig/gen_cfg_overlap_random.png')
 
 
 # %%
