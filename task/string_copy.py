@@ -80,7 +80,7 @@ class RandomGeneratorWithLabels(RandomGenerator):
 class CfgGenerator(BaseGenerator):
     def __init__(self, lengths, t_lengths=3, nt_ordered=True, nt_unique=True,
                  n_nonterminals=5, n_terminals=10,
-                 within_overlap_prob=None, cross_overlap_prob=None,
+                 within_overlap_prob=None, cross_overlap_prob=None, rand_injection_prob=0,
                  sampling_strategy='zipf', compress=True, seed=None) -> None:
         
         if seed == None:
@@ -95,8 +95,8 @@ class CfgGenerator(BaseGenerator):
 
         self.within_overlap_prob = within_overlap_prob
         self.cross_overlap_prob = cross_overlap_prob
+        self.rand_injection_prob = rand_injection_prob
         rng = np.random.default_rng(seed=seed+1)
-
         
         self.nt_to_ts = {}
         t_gen = RandomGenerator(t_lengths, alphabet_size=n_terminals, seed=seed+2)
@@ -125,6 +125,10 @@ class CfgGenerator(BaseGenerator):
         if compress:
             self.nt_to_ts, n_terminals = CfgGenerator._remap(self.nt_to_ts)
         self.alphabet_size = n_terminals
+        self.all_terminals = np.unique(
+                                np.concatenate(
+                                    list(self.nt_to_ts.values())
+                                ))
     
     @staticmethod
     def _remap(nt_to_ts):
@@ -145,9 +149,12 @@ class CfgGenerator(BaseGenerator):
     def __next__(self):
         nts = next(self.nt_gen)['pattern']
         ts = [self.nt_to_ts[nt] for nt in nts]
-        ts = [t for chunk in ts for t in chunk]
+        ts = np.array([t for chunk in ts for t in chunk])
 
-        return {'pattern': np.array(ts)}
+        if np.random.uniform() < self.rand_injection_prob:
+            ts = np.random.choice(self.all_terminals, size=len(ts))
+
+        return {'pattern': ts}
     
     def to_emb_idxs(self, start_idx=4):
         return {k : v + start_idx for k, v in self.nt_to_ts.items()}
@@ -308,9 +315,10 @@ if __name__ == '__main__':
             'nt_ordered': False,
             'n_nonterminals': 15,
             'seed': np.random.randint(0, 999999),
-            'within_overlap_prob': 0,
-            'cross_overlap_prob': 1,
+            # 'within_overlap_prob': 0,
+            # 'cross_overlap_prob': 1,
             'compress': True,
+            'rand_injection_prob': 0.5
         },
         non_causal_prompt=True
     )
@@ -318,8 +326,9 @@ if __name__ == '__main__':
     ds, config = CopyDataset.from_config(config)
     
     dl = to_dataloader(ds, batch_size=8)
-    # print(next(iter(dl)))
-    print(ds.gen.nt_to_ts)
+    print(next(iter(dl))['inputs'])
+    # print(ds.gen.nt_to_ts)
+    # print(ds.gen.all_terminals)
 # %%
 # import math
 

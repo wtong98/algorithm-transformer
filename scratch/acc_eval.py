@@ -22,7 +22,6 @@ from task.string_copy import *
 
 def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
     kwargs = config.ds_generator_kwargs.copy({'lengths': length})
-    # TODO: test
     config = config.replace(ds_generator_kwargs=kwargs, vocab_size=params['Embed_0']['embedding'].shape[0])
     train_ds, config = CopyDataset.from_config(config, unify_config=False)
 
@@ -103,6 +102,7 @@ if scratch_dir is not None:
 
 
 all_cases = []
+ps = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
 for i in range(n_iters):
     all_cases.extend([
         # Case('NoPE', config=TransformerConfig(
@@ -113,65 +113,11 @@ for i in range(n_iters):
         # Case('Random (Relative)', config=TransformerConfig(
         #     rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
 
-        Case('Within (p=0)', config=TransformerConfig(
+        Case(f'Rand (p={p})', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0, **init_common_kwargs())
-        ), save_dir=f'cfg_within_0_{i}'),
-
-        Case('Within (p=0.25)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.25, **init_common_kwargs())
-        ), save_dir=f'cfg_within_0.25_{i}'),
-
-        Case('Within (p=0.5)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.5, **init_common_kwargs())
-        ), save_dir=f'cfg_within_0.5_{i}'),
-
-        Case('Within (p=0.75)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=0.75, **init_common_kwargs())
-        ), save_dir=f'cfg_within_0.75_{i}'),
-
-        Case('Within (p=1)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(within_overlap_prob=1, **init_common_kwargs())
-        ), save_dir=f'cfg_within_1_{i}'),
-
-        Case('Cross (p=0)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0, **init_common_kwargs())
-        ), save_dir=f'cfg_cross_0_{i}'),
-
-        Case('Cross (p=0.25)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.25, **init_common_kwargs())
-        ), save_dir=f'cfg_cross_0.25_{i}'),
-
-        Case('Cross (p=0.5)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.5, **init_common_kwargs())
-        ), save_dir=f'cfg_cross_0.5_{i}'),
-
-        Case('Cross (p=0.75)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=0.75, **init_common_kwargs())
-        ), save_dir=f'cfg_cross_0.75_{i}'),
-
-        Case('Cross (p=1)', config=TransformerConfig(
-            nope_embeding=True,
-            ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(cross_overlap_prob=1, **init_common_kwargs())
-        ), save_dir=f'cfg_cross_1_{i}'),
+            ds_generator_kwargs=FrozenDict(rand_injection_prob=p, **init_common_kwargs()),
+        ), save_dir=f'cfg_rand_{p}_{i}')
 
         # Case('base', config=TransformerConfig(
         #     nope_embeding=True,
@@ -179,16 +125,17 @@ for i in range(n_iters):
         #     ds_generator_name='RandomGenerator',
         #     ds_generator_kwargs=FrozenDict(lengths=(1,2,3), unique=True, ordered=True, alphabet_size=3)
         # ), save_dir='base')
-    ])
+    for p in ps])
 
 for case in all_cases:
     case.save_dir = save_prefix + case.save_dir
 
 # <codecell>
+# TODO: attempt trial run <-- STOPPED HERE
 for case in all_cases:
-    if Path(case.save_dir).exists():
-        print('SKIPPING', case.name)
-        continue
+    # if Path(case.save_dir).exists():
+    #     print('SKIPPING', case.name)
+    #     continue
 
     print('TRAINING', case.name)
 
@@ -219,23 +166,25 @@ for case in all_cases:
     r = mngr.restore(mngr.best_step())
     params = r['state']['params']
 
-    case.res['gen_acc'] = []
+    case.res['struct_acc'] = []
+    case.res['same_acc'] = []
     case.res['rand_acc'] = []
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
         acc, fails = evaluate_acc(ex_len, params, case.config, n_examples=n_test_examples)
 
-        rand_config = case.config.replace(
-            ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict({
-                'alphabet_size': 10   # NOTE: arbitrarily chosen
-            })
+        struct_config = case.config.replace(
+            ds_generator_kwargs=case.config.ds_generator_kwargs.copy({'rand_injection_prob': 0})
         )
+        struct_acc, _ = evaluate_acc(ex_len, params, struct_config, n_examples=n_test_examples)
 
+        rand_config = case.config.replace(
+            ds_generator_kwargs=case.config.ds_generator_kwargs.copy({'rand_injection_prob': 1})
+        )
         rand_acc, _ = evaluate_acc(ex_len, params, rand_config, n_examples=n_test_examples)
 
-        case.res['gen_acc'].append({'len': ex_len, 'acc': acc})
+        case.res['struct_acc'].append({'len': ex_len, 'acc': struct_acc})
+        case.res['same_acc'].append({'len': ex_len, 'acc': acc})
         case.res['rand_acc'].append({'len': ex_len, 'acc': rand_acc})
-
 
     jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
 
