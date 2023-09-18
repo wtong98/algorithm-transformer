@@ -22,7 +22,8 @@ from task.string_copy import *
 
 def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
     kwargs = config.ds_generator_kwargs.copy({'lengths': length})
-    config = config.replace(ds_generator_kwargs=kwargs)
+    # TODO: test
+    config = config.replace(ds_generator_kwargs=kwargs, vocab_size=params['Embed_0']['embedding'].shape[0])
     train_ds, config = CopyDataset.from_config(config, unify_config=False)
 
     print('CONFIG', config)
@@ -222,8 +223,8 @@ for case in all_cases:
     case.res['rand_acc'] = []
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
         acc, fails = evaluate_acc(ex_len, params, case.config, n_examples=n_test_examples)
+
         rand_config = case.config.replace(
-            vocab_size=params['Embed_0']['embedding'].shape[0],
             ds_generator_name='RandomGenerator',
             ds_generator_kwargs=FrozenDict({
                 'alphabet_size': 10   # NOTE: arbitrarily chosen
@@ -250,23 +251,16 @@ with open('save/remote/cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
-case = all_cases[1]
+case = all_cases[0]
+case.save_dir = 'save/cfg_within_0_0'
 mngr = make_ckpt_manager(case.save_dir)
 config = case.config
 r = mngr.restore(mngr.best_step())
 params = r['state']['params']
 print('BEST', mngr.best_step())
 
-# evaluate_acc(300, params, config, n_examples=32)
-# prompt = [5, 4, 5, 5, 5, 5, 1]
-# pred, labs = predict(prompt, params, config)
-# correct = np.concatenate((prompt, prompt[1:]))
-# # print('corr', correct)
-# print('pred', pred)
-# print('labs', labs)
 
-evaluate_acc(20, params, config, n_examples=32)
-
+evaluate_acc(3, params, config, n_examples=10)
 
 # <codecell>
 with open('save/cases.pkl', 'rb') as fp:
@@ -275,7 +269,7 @@ with open('save/cases.pkl', 'rb') as fp:
 # <codecell>
 all_df = []
 for case in all_cases:
-    curr_df = pd.DataFrame(case.res['rand_acc'])
+    curr_df = pd.DataFrame(case.res['gen_acc'])
     curr_df['name'] = case.name
     all_df.append(curr_df)
 df = pd.concat(all_df)
@@ -289,7 +283,7 @@ sns.move_legend(g, 'lower left')
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_cfg_overlap_random.png')
+plt.savefig('fig/gen_cfg_overlap_general.png')
 
 
 # %%
