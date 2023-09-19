@@ -79,3 +79,4 @@ def run_train(all_cases, skip_existing=False):
         _, info = train(case.config, train_dl, init_params=init_params, eval_dl=train_dl,
                         n_iters=case.train_iters, print_every=1_000, save_dir=case.save_dir)
         plot_train_metrics(info, save_path=case.save_dir + '/metrics.png')
+        plt.close()

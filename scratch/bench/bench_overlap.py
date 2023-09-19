@@ -96,7 +96,7 @@ for case in all_cases:
     jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
 
 # <codecell>
-with open('save/cases.pkl', 'wb') as fp:
+with open('save/overlap_cases.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
 if scratch_dir is not None:

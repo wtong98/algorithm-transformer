@@ -74,7 +74,7 @@ for case in all_cases:
     case.save_dir = save_prefix + case.save_dir
 
 # <codecell>
-run_train(all_cases, skip_existing=False)
+run_train(all_cases, skip_existing=True)
 
 # <codecell>
 for case in all_cases:
@@ -106,7 +106,7 @@ for case in all_cases:
     jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
 
 # <codecell>
-with open('save/cases.pkl', 'wb') as fp:
+with open('save/rand_inj_cases.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
 if scratch_dir is not None:

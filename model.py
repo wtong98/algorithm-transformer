@@ -689,39 +689,6 @@ def compute_metrics(logits, targets, mask, causal=True, vocab_size=None):
     }
 
 
-def evaluate_acc(length, params, config, max_item_label=-1, n_symbols=2, n_examples=100, use_tqdm=False):
-    train_ds = CopyDataset(length, vocab_size=n_symbols,
-                           max_item_label=max_item_label, bos=True)
-
-    n_correct = 0
-    fails = []
-
-    it = zip(range(n_examples), iter(train_ds))
-    if use_tqdm:
-        it = tqdm(it, total=n_examples)
-
-    for _, example in it:
-        ans = example[0]
-        offset = 1 if train_ds.bos else 0
-        prompt = ans[:len(ans)//2+offset].astype('int')
-        try:
-            pred = predict(prompt, params, config)
-        except Exception as e:
-            print('failed to predict: ', e)
-            fails.append((prompt, None))
-            continue
-
-        if hasattr(pred, '__len__'):
-            pred = pred[0]
-
-        if pred.shape == ans.shape and np.all(pred == ans):
-            n_correct += 1
-        else:
-            fails.append((prompt, pred))
-
-    return n_correct / n_examples, fails
-
-
 # <codecell>
 '''
 n_symbols = 10
