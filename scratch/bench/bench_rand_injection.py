@@ -87,17 +87,17 @@ for case in all_cases:
     case.res['same_acc'] = []
     case.res['rand_acc'] = []
     for ex_len in tqdm(reversed(range(1, max_test_len + 1, test_every)), total=max_test_len//test_every):
-        acc, fails = evaluate_acc(ex_len, params, case.config, n_examples=n_test_examples)
+        acc = evaluate_acc(ex_len, params, case.config, n_examples=n_test_examples)
 
         struct_config = case.config.replace(
             ds_generator_kwargs=case.config.ds_generator_kwargs.copy({'rand_injection_prob': 0})
         )
-        struct_acc, _ = evaluate_acc(ex_len, params, struct_config, n_examples=n_test_examples)
+        struct_acc = evaluate_acc(ex_len, params, struct_config, n_examples=n_test_examples)
 
         rand_config = case.config.replace(
             ds_generator_kwargs=case.config.ds_generator_kwargs.copy({'rand_injection_prob': 1})
         )
-        rand_acc, _ = evaluate_acc(ex_len, params, rand_config, n_examples=n_test_examples)
+        rand_acc = evaluate_acc(ex_len, params, rand_config, n_examples=n_test_examples)
 
         case.res['struct_acc'].append({'len': ex_len, 'acc': struct_acc})
         case.res['same_acc'].append({'len': ex_len, 'acc': acc})
