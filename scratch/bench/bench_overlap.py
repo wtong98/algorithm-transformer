@@ -104,13 +104,13 @@ if scratch_dir is not None:
 
 # <codecell>
 # with open('save/cases.pkl', 'rb') as fp:
-with open('save/remote/cases.pkl', 'rb') as fp:
+with open('save/remote/overlap_cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
 all_df = []
 for case in all_cases:
-    curr_df = pd.DataFrame(case.res['gen_acc'])
+    curr_df = pd.DataFrame(case.res['rand_acc'])
     curr_df['name'] = case.name
     all_df.append(curr_df)
 df = pd.concat(all_df)
@@ -119,9 +119,9 @@ df = pd.concat(all_df)
 plt.gcf().set_size_inches(28, 3)
 g = sns.barplot(df, x='len', y='acc', hue='name')
 g.legend_.set_title(None)
-sns.move_legend(g, 'lower left')
+# sns.move_legend(g, 'lower left')
 
 plt.axvline(4.5, color='red', linestyle='dashed')
 plt.ylabel('acc (aon)')
 plt.gcf().tight_layout()
-# plt.savefig('fig/gen_cfg_overlap_general.png')
+# plt.savefig('fig/gen_cfg_overlap_random.png')

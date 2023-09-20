@@ -148,11 +148,16 @@ class CfgGenerator(BaseGenerator):
     
     def __next__(self):
         nts = next(self.nt_gen)['pattern']
-        ts = [self.nt_to_ts[nt] for nt in nts]
+
+        def samp_next(nt):
+            ts = self.nt_to_ts[nt]
+            if np.random.uniform() < self.rand_injection_prob:
+                ts = np.random.choice(self.all_terminals, size=len(ts))
+            return ts
+
+        ts = [samp_next(nt) for nt in nts]
         ts = np.array([t for chunk in ts for t in chunk])
 
-        if np.random.uniform() < self.rand_injection_prob:
-            ts = np.random.choice(self.all_terminals, size=len(ts))
 
         return {'pattern': ts}
     

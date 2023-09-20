@@ -26,6 +26,7 @@ n_test_examples = 32
 max_train_len = 5
 max_test_len = 15
 max_item_label = 50
+train_iters = 100_000
 
 def init_common_kwargs():
     return FrozenDict(
@@ -48,33 +49,19 @@ all_cases = []
 ps = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
 for i in range(n_iters):
     all_cases.extend([
-        # Case('NoPE', config=TransformerConfig(
-        #     nope_embeding=True), save_dir=f'save/nope_{i}'),
-        # Case('Sinusoid', config=TransformerConfig(), save_dir=f'save/sinusoid_{i}'),
-        # Case('Relative', config=TransformerConfig(
-        #     rel_pos_att=True), save_dir=f'save/relative_{i}'),
-        # Case('Random (Relative)', config=TransformerConfig(
-        #     rel_pos_att=True, rel_pos_rand_max=(2*max_item_label+2)), save_dir=f'save/relative-rand_{i}'),
-
         Case(f'Rand (p={p})', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
             ds_generator_kwargs=FrozenDict(rand_injection_prob=p, **init_common_kwargs()),
         ), save_dir=f'cfg_rand_{p}_{i}')
-
-        # Case('base', config=TransformerConfig(
-        #     nope_embeding=True,
-        #     num_layers=3,
-        #     ds_generator_name='RandomGenerator',
-        #     ds_generator_kwargs=FrozenDict(lengths=(1,2,3), unique=True, ordered=True, alphabet_size=3)
-        # ), save_dir='base')
     for p in ps])
 
 for case in all_cases:
     case.save_dir = save_prefix + case.save_dir
+    case.train_iters = train_iters
 
 # <codecell>
-run_train(all_cases, skip_existing=True)
+run_train(all_cases, skip_existing=False)
 
 # <codecell>
 for case in all_cases:
@@ -114,24 +101,52 @@ if scratch_dir is not None:
 
 # <codecell>
 # with open('save/cases.pkl', 'rb') as fp:
-with open('save/remote/cases.pkl', 'rb') as fp:
+with open('save/remote/rand_inj_cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
-all_df = []
-for case in all_cases:
-    curr_df = pd.DataFrame(case.res['gen_acc'])
-    curr_df['name'] = case.name
-    all_df.append(curr_df)
-df = pd.concat(all_df)
+# TODO: plot pretty, retrain until convergence, confirm remarkable results
+def to_df(key):
+    all_df = []
+    for case in all_cases:
+        curr_df = pd.DataFrame(case.res[key])
+        curr_df['name'] = case.name
+        all_df.append(curr_df)
+    df = pd.concat(all_df)
+    return df
+
+keys = ['same_acc', 'struct_acc', 'rand_acc']
+all_dfs = [to_df(k) for k in keys]
+titles = ['Same', 'Structured', 'Random']
 
 # <codecell>
-plt.gcf().set_size_inches(28, 3)
-g = sns.barplot(df, x='len', y='acc', hue='name')
-g.legend_.set_title(None)
-sns.move_legend(g, 'lower left')
+fig, axs = plt.subplots(3, 1, figsize=(28, 9))
+for ax, df, title in zip(axs, all_dfs, titles):
+    g = sns.barplot(df, x='len', y='acc', hue='name', ax=ax)
+    g.legend_.set_title(None)
+    # sns.move_legend(g, 'lower left')
 
-plt.axvline(4.5, color='red', linestyle='dashed')
-plt.ylabel('acc (aon)')
+    ax.axvline(4.5, color='red', linestyle='dashed')
+    ax.set_ylabel('acc (aon)')
+    ax.set_title(title)
+
 plt.gcf().tight_layout()
-# plt.savefig('fig/gen_cfg_overlap_general.png')
+plt.savefig('fig/gen_cfg_rand_injection_all_or_nothing_accident.png')
+
+# <codecell>
+case = all_cases[8]
+case.res
+
+case.save_dir = 'save/cfg_rand_0.8_0'
+
+mngr = make_ckpt_manager(case.save_dir)
+r = mngr.restore(mngr.best_step())
+params = r['state']['params']
+
+ds, _ = CopyDataset.from_config(case.config)
+ds.gen.nt_to_ts
+it = iter(ds)
+
+
+# <codecell>
+next(ds)
