@@ -19,7 +19,7 @@ from bench_common import *
 from model import *
 from task.string_copy import *
 
-n_iters = 3
+n_iters = 10
 n_symbols = 100_000_000
 test_every = 1
 n_test_examples = 32
@@ -61,7 +61,7 @@ for case in all_cases:
     case.train_iters = train_iters
 
 # <codecell>
-run_train(all_cases, skip_existing=False)
+run_train(all_cases, skip_existing=True)
 
 # <codecell>
 for case in all_cases:
@@ -131,7 +131,7 @@ for ax, df, title in zip(axs, all_dfs, titles):
     ax.set_title(title)
 
 plt.gcf().tight_layout()
-plt.savefig('fig/gen_cfg_rand_injection_all_or_nothing_accident.png')
+plt.savefig('fig/gen_cfg_rand_injection_convergence_interleaved.png')
 
 # <codecell>
 case = all_cases[8]
