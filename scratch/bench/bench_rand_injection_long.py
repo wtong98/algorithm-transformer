@@ -19,18 +19,17 @@ from bench_common import *
 from model import *
 from task.string_copy import *
 
-n_iters = 10
+n_iters = 3
 n_symbols = 100_000_000
 test_every = 1
 n_test_examples = 32
-max_train_len = 5
-max_test_len = 15
+max_test_len = 25
 max_item_label = 50
 train_iters = 100_000
 
 def init_common_kwargs():
     return FrozenDict(
-        lengths=tuple(range(1, max_train_len+1)),
+        # lengths=tuple(range(1, max_train_len+1)),
         n_nonterminals=max_test_len,
         n_terminals=n_symbols,
         t_lengths=3,
@@ -46,22 +45,23 @@ if scratch_dir is not None:
         prefix_path.mkdir(parents=True)
 
 all_cases = []
-ps = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+max_train_lens = [5, 7, 10, 12, 15]
+ps = [0, 0.25, 0.5, 0.75, 1]
 for i in range(n_iters):
     all_cases.extend([
-        Case(f'Rand (p={p})', config=TransformerConfig(
+        Case(f'Rand (p={p}, l<={l})', config=TransformerConfig(
             nope_embeding=True,
             ds_generator_name='CfgGenerator',
-            ds_generator_kwargs=FrozenDict(rand_injection_prob=p, **init_common_kwargs()),
-        ), save_dir=f'cfg_rand_{p}_{i}')
-    for p in ps])
+            ds_generator_kwargs=FrozenDict(rand_injection_prob=p, lengths=tuple(range(1, l+1)), **init_common_kwargs()),
+        ), save_dir=f'cfg_rand_{p}_{l}_{i}')
+    for p in ps for l in max_train_lens])
 
 for case in all_cases:
     case.save_dir = save_prefix + case.save_dir
     case.train_iters = train_iters
 
 # <codecell>
-run_train(all_cases, skip_existing=True)
+run_train(all_cases, skip_existing=False)
 
 # <codecell>
 for case in all_cases:
