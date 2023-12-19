@@ -21,10 +21,9 @@ from task.string_copy import *
 
 n_iters = 3
 n_symbols = 100_000_000
-test_every = 1
+test_every = 2
 n_test_examples = 32
-max_test_len = 25
-max_item_label = 50
+max_test_len = 50
 train_iters = 100_000
 
 def init_common_kwargs():
@@ -45,7 +44,7 @@ if scratch_dir is not None:
         prefix_path.mkdir(parents=True)
 
 all_cases = []
-max_train_lens = [5, 7, 10, 12, 15]
+max_train_lens = [3, 5, 11, 21]
 ps = [0, 0.25, 0.5, 0.75, 1]
 for i in range(n_iters):
     all_cases.extend([
@@ -101,7 +100,7 @@ if scratch_dir is not None:
 
 # <codecell>
 # with open('save/cases.pkl', 'rb') as fp:
-with open('save/remote/rand_inj_cases.pkl', 'rb') as fp:
+with open('save/remote/rand_inj_cases_long.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
@@ -119,18 +118,23 @@ all_dfs = [to_df(k) for k in keys]
 titles = ['Same', 'Structured', 'Random']
 
 # <codecell>
-fig, axs = plt.subplots(3, 1, figsize=(28, 9))
-for ax, df, title in zip(axs, all_dfs, titles):
-    g = sns.boxplot(df, x='len', y='acc', hue='name', ax=ax)
-    g.legend_.set_title(None)
-    sns.move_legend(g, 'lower left')
+for l in max_train_lens:
+    fig, axs = plt.subplots(3, 1, figsize=(28, 9))
+    for ax, df, title in zip(axs, all_dfs, titles):
+        sel_width = df['name'].str.contains(f'<={l}')
+        df = df[sel_width]
 
-    ax.axvline(4.5, color='red', linestyle='dashed')
-    ax.set_ylabel('acc (aon)')
-    ax.set_title(title)
+        g = sns.boxplot(df, x='len', y='acc', hue='name', ax=ax)
+        g.legend_.set_title(None)
+        sns.move_legend(g, 'lower left')
 
-plt.gcf().tight_layout()
-plt.savefig('fig/gen_cfg_rand_injection_convergence_interleaved_10rep_box.png')
+        ax.axvline(l-0.5, color='red', linestyle='dashed')
+        ax.set_ylabel('acc (aon)')
+        ax.set_title(title)
+
+    plt.gcf().tight_layout()
+    plt.savefig(f'fig/gen_cfg_rand_injection_width_{l}.png')
+    plt.show()
 
 # <codecell>
 case = all_cases[8]

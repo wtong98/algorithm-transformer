@@ -314,7 +314,8 @@ if __name__ == '__main__':
     config = TransformerConfig(
         ds_generator_name='CfgGenerator',
         ds_generator_kwargs={
-            'lengths': np.arange(5) + 1,
+            # 'lengths': np.arange(5) + 1,
+            'lengths': 3,
             't_lengths': 3,
             'n_terminals': 100000,
             'nt_ordered': False,
