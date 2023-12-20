@@ -54,7 +54,7 @@ def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
     return n_correct / n_examples
 
 
-def run_train(all_cases, skip_existing=False):
+def run_train(all_cases, skip_existing=False, batch_size=32):
     for case in all_cases:
         if skip_existing and Path(case.save_dir).exists():
             print('SKIPPING', case.name)
@@ -66,14 +66,14 @@ def run_train(all_cases, skip_existing=False):
         if case.fine_tune_split is not None:
             print('(training base)')
             train_ds, case.config = GenerativeDataset.from_config(case.config)
-            train_dl = to_dataloader(train_ds, batch_size=32, pin_memory=True)
+            train_dl = to_dataloader(train_ds, batch_size=batch_size, pin_memory=True)
 
             n_iters = int(case.fine_tune_split * case.train_iters)
             state, info = train(case.config, train_dl, eval_dl=train_dl, n_iters=n_iters, print_every=1000)
             init_params = state.params
 
         train_ds, case.config = CopyDataset.from_config(case.config)
-        train_dl = to_dataloader(train_ds, batch_size=32,
+        train_dl = to_dataloader(train_ds, batch_size=batch_size,
                                 num_workers=0, pin_memory=True)
 
         _, info = train(case.config, train_dl, init_params=init_params, eval_dl=train_dl,

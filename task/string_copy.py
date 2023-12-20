@@ -81,7 +81,7 @@ class CfgGenerator(BaseGenerator):
     def __init__(self, lengths, t_lengths=3, nt_ordered=True, nt_unique=True,
                  n_nonterminals=5, n_terminals=10,
                  within_overlap_prob=None, cross_overlap_prob=None, rand_injection_prob=0,
-                 sampling_strategy='zipf', compress=True, seed=None) -> None:
+                 sampling_strategy='zipf', compress=True, fix_size=None, seed=None) -> None:
         
         if seed == None:
             seed = new_seed()
@@ -124,11 +124,18 @@ class CfgGenerator(BaseGenerator):
 
         if compress:
             self.nt_to_ts, n_terminals = CfgGenerator._remap(self.nt_to_ts)
+
         self.alphabet_size = n_terminals
         self.all_terminals = np.unique(
                                 np.concatenate(
                                     list(self.nt_to_ts.values())
                                 ))
+        
+        self.fix_size = fix_size
+        self.dataset = None
+        if fix_size is not None:
+            self.dataset = [self.sample() for _ in range(fix_size)]
+        
     
     @staticmethod
     def _remap(nt_to_ts):
@@ -146,7 +153,7 @@ class CfgGenerator(BaseGenerator):
                     
         return nt_to_ts, tok_counter
     
-    def __next__(self):
+    def sample(self):
         nts = next(self.nt_gen)['pattern']
 
         def samp_next(nt):
@@ -160,6 +167,12 @@ class CfgGenerator(BaseGenerator):
 
 
         return {'pattern': ts}
+
+    def __next__(self):
+        if self.dataset is not None:
+            return np.random.choice(self.dataset)
+
+        return self.sample()
     
     def to_emb_idxs(self, start_idx=4):
         return {k : v + start_idx for k, v in self.nt_to_ts.items()}
@@ -315,7 +328,7 @@ if __name__ == '__main__':
         ds_generator_name='CfgGenerator',
         ds_generator_kwargs={
             # 'lengths': np.arange(5) + 1,
-            'lengths': 3,
+            'lengths': [1,2,3],
             't_lengths': 3,
             'n_terminals': 100000,
             'nt_ordered': False,
@@ -323,6 +336,7 @@ if __name__ == '__main__':
             'seed': np.random.randint(0, 999999),
             # 'within_overlap_prob': 0,
             # 'cross_overlap_prob': 1,
+            'fix_size': 3,
             'compress': True,
             'rand_injection_prob': 0.5
         },
