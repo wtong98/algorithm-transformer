@@ -45,7 +45,7 @@ if scratch_dir is not None:
         prefix_path.mkdir(parents=True)
 
 all_cases = []
-data_sizes = [64, 128, 256, 512, 1024, 2048, None]
+data_sizes = [128, 256, 512, 1024, 2048, 4096, None]
 
 for i in range(n_iters):
     all_cases.extend([
@@ -61,8 +61,7 @@ for case in all_cases:
     case.train_iters = train_iters
 
 # <codecell>
-run_train(all_cases, skip_existing=False)
-
+run_train(all_cases, skip_existing=True)
 
 # <codecell>
 for case in all_cases:
@@ -74,7 +73,12 @@ for case in all_cases:
     case.res['acc'] = []
 
     for ex_len in tqdm(reversed(range(1, max_test_len + 1)), total=max_test_len):
-        acc = evaluate_acc(ex_len, params, case.config)
+
+        test_config = case.config.replace(
+            ds_generator_kwargs=case.config.ds_generator_kwargs.copy({'fix_size': None})
+        )
+
+        acc = evaluate_acc(ex_len, params, test_config)
         case.res['acc'].append({'len': ex_len, 'acc': acc})
 
     jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
@@ -91,6 +95,27 @@ if scratch_dir is not None:
 # with open('save/cases.pkl', 'rb') as fp:
 with open('save/remote/cfg_fix_cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
+
+# <codecell>
+# <codecell>
+def to_df(key):
+    all_df = []
+    for case in all_cases:
+        curr_df = pd.DataFrame(case.res[key])
+        curr_df['name'] = case.name
+        all_df.append(curr_df)
+    df = pd.concat(all_df)
+    return df
+
+df = to_df('acc')
+
+# <codecell>
+plt.gcf().set_size_inches(28, 3)
+g = sns.boxplot(df, x='len', y='acc', hue='name')
+g.legend_.set_title('')
+
+plt.tight_layout()
+plt.savefig('fig/gen_cfg_fixed.png')
 
 
 # <codecell>
