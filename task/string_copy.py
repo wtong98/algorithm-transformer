@@ -15,6 +15,29 @@ from util import TransformerConfig, new_seed
 
 start_char = 97    # ASCII 97 corresponds to 'a'
 
+
+def to_list(a):
+    try:
+        a = list(a)
+    except TypeError:
+        a = [a]
+    return a
+
+
+def parse_sampling_strategy(probs, lengths, sampling_strategy):
+    if probs is None and sampling_strategy is not None:
+        if sampling_strategy == 'zipf':
+            weights = 1 / np.array(lengths)
+            probs = weights / np.sum(weights)
+        elif sampling_strategy == 'inv_zipf':
+            weights = np.array(lengths)
+            probs = weights / np.sum(weights)
+        else:
+            raise ValueError(f'sampling strategy unrecognized: {sampling_strategy}')
+
+    return probs
+
+
 class BaseGenerator:
     def __init__(self):
         self.alphabet_size = None
@@ -29,28 +52,14 @@ class RandomGenerator(BaseGenerator):
              probs=None, sampling_strategy='zipf', 
              seed=None):
 
-        try:
-            lengths = list(lengths)
-        except TypeError:
-            lengths = [lengths]
+        self.lengths = to_list(lengths)
         
-        if unique and max(lengths) > alphabet_size:
+        if unique and max(self.lengths) > alphabet_size:
             raise ValueError('tokens are supposed to be unique, but maximum length exceeds vocab size')
         
-        if probs is None and sampling_strategy is not None:
-            if sampling_strategy == 'zipf':
-                weights = 1 / np.array(lengths)
-                probs = weights / np.sum(weights)
-            elif sampling_strategy == 'inv_zipf':
-                weights = np.array(lengths)
-                probs = weights / np.sum(weights)
-            else:
-                raise ValueError(f'sampling strategy unrecognized: {sampling_strategy}')
-        
-        self.lengths = lengths
+        self.probs = parse_sampling_strategy(probs, self.lengths, sampling_strategy)
         self.ordered = ordered
         self.unique = unique
-        self.probs = probs
         self.rng = np.random.default_rng(seed)
         self.alphabet_size = alphabet_size
     
@@ -190,6 +199,36 @@ def from_config(ds_class, config: TransformerConfig, unify_config=True):
             config = config.replace(max_item_label=gen.max_item_label)
         
     return ds, config
+
+
+class BigramGenerator(BaseGenerator):
+    def __init__(self, lengths, beta=1, alphabet_size=2,
+             probs=None, sampling_strategy='zipf', 
+             seed=None):
+
+        self.lengths = to_list(lengths)
+        
+        self.probs = parse_sampling_strategy(probs, self.lengths, sampling_strategy)
+        self.beta = beta
+        self.rng = np.random.default_rng(seed)
+        self.alphabet_size = alphabet_size
+    
+    def build_lm(self):
+        self.uni_probs = np.random.random(size=(self.alphabet_size))
+        self.uni_probs = self.uni_probs / np.sum(self.uni_probs)
+
+        self.bi_probs = np.random.random(size=(self.alphabet_size, self.alphabet_size))
+        self.bi_probs = np.exp(-self.beta * self.bi_probs)
+        self.bi_probs = self.bi_probs / np.sum(self.bi_probs, axis=1, keepdims=True)
+
+        uni_probs_tiled = np.c_[(self.uni_probs,) * self.alphabet_size]
+        self.joint_probs = self.bi_probs * uni_probs_tiled
+    
+    def sample_lm(self):
+        pass # TODO: sample and test probs <-- STOPPED HERE
+    
+    def __next__(self):
+        pass
 
 
 class CopyDataset(IterableDataset):

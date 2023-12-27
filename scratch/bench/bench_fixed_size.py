@@ -114,9 +114,34 @@ plt.gcf().set_size_inches(28, 3)
 g = sns.boxplot(df, x='len', y='acc', hue='name')
 g.legend_.set_title('')
 
+g.axvline(9.5, color='red', linestyle='dashed')
+
 plt.tight_layout()
 plt.savefig('fig/gen_cfg_fixed.png')
 
+# <codecell>
+## Calculate average proportion of examples seen
+for total in data_sizes[:-1]:
+    dist = np.arange(max_train_len) + 1
+    dist = 1 / dist
+    dist = dist / np.sum(dist)
+
+    avg_examples = dist * total
+    avg_prop = avg_examples / max_train_len**(np.arange(max_train_len) + 1)
+    avg_prop = np.clip(avg_prop, 0, 1)
+
+    plt.plot(np.arange(max_train_len) + 1, avg_prop, '--o', label=total, alpha=0.7)
+
+plt.plot(np.arange(max_train_len) + 1, np.ones(10), '--o', color='black', label='online', alpha=0.7)
+
+plt.legend()
+plt.yscale('log')
+
+plt.xlabel('Length')
+plt.ylabel('Average proportion of examples observed')
+
+plt.tight_layout()
+plt.savefig('fig/cfg_fixed_obs_examples.png')
 
 # <codecell>
 
