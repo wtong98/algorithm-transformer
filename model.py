@@ -691,14 +691,15 @@ def compute_metrics(logits, targets, mask, causal=True, vocab_size=None):
 
 # <codecell>
 '''
-n_symbols = 10
-max_item_label = 25
-max_train_len = 5
+n_symbols = 2
+# max_item_label = 25
+max_train_len = 10
 
 config = TransformerConfig(
     num_layers=3,
-    rel_pos_att=True,
-    non_causal_prompt=True,
+    rel_pos_att=False,
+    non_causal_prompt=False,
+    nope_embeding=True,
 
     # ds_generator_name='CfgGenerator',
     # ds_generator_kwargs=FrozenDict({
@@ -710,11 +711,10 @@ config = TransformerConfig(
     #     'n_terminals': n_symbols
     # }))
 
-    ds_generator_name='RandomGenerator',
+    ds_generator_name='BigramGenerator',
     ds_generator_kwargs=FrozenDict({
         'lengths': tuple(np.arange(max_train_len) + 1),
-        'unique': True,
-        'ordered': True,
+        'beta': 10,
         'alphabet_size': n_symbols
     }))
 

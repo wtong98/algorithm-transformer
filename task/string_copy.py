@@ -212,9 +212,13 @@ class BigramGenerator(BaseGenerator):
         self.beta = beta
         self.rng = np.random.default_rng(seed)
         self.alphabet_size = alphabet_size
+
+        self.build_lm()
     
     def build_lm(self):
-        self.uni_probs = np.random.random(size=(self.alphabet_size))
+        # self.uni_probs = np.random.random(size=(self.alphabet_size))
+        # self.uni_probs = np.exp(-self.beta * self.uni_probs)
+        self.uni_probs = np.ones(self.alphabet_size)
         self.uni_probs = self.uni_probs / np.sum(self.uni_probs)
 
         self.bi_probs = np.random.random(size=(self.alphabet_size, self.alphabet_size))
@@ -225,10 +229,22 @@ class BigramGenerator(BaseGenerator):
         self.joint_probs = self.bi_probs * uni_probs_tiled
     
     def sample_lm(self):
-        pass # TODO: sample and test probs <-- STOPPED HERE
+        length = np.random.choice(self.lengths, p=self.probs)
+        toks = [np.random.choice(self.alphabet_size, p=self.uni_probs)]
+
+        while len(toks) < length:
+            last_tok = toks[-1]
+            next_tok = np.random.choice(self.alphabet_size, p=self.bi_probs[last_tok,:])
+            toks.append(next_tok)
+        
+        return toks
+    
+    def compute_entropy(self):
+        return -np.sum(self.joint_probs * np.log(self.joint_probs))
     
     def __next__(self):
-        pass
+        toks = self.sample_lm()
+        return {'pattern': toks}
 
 
 class CopyDataset(IterableDataset):
@@ -257,7 +273,7 @@ class CopyDataset(IterableDataset):
 
     def __next__(self):
         out = next(self.gen)
-        pattern = out.get('pattern') + self.start_symbol_idx
+        pattern = np.array(out.get('pattern')) + self.start_symbol_idx
         item_labels = out.get('labels')
 
         pattern_mask = np.ones(len(pattern))
@@ -363,29 +379,51 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
+    # g = BigramGenerator(5, beta=1, alphabet_size=2)
+    # print(g.compute_entropy())
+    # print(g.joint_probs)
+
+    # for _ in range(5):
+    #     print(next(g))
+
+    # TODO: plug into model and try for realsies <-- STOPPED HERE
     config = TransformerConfig(
-        ds_generator_name='CfgGenerator',
+        ds_generator_name='BigramGenerator',
         ds_generator_kwargs={
-            # 'lengths': np.arange(5) + 1,
-            'lengths': [1,2,3],
-            't_lengths': 3,
-            'n_terminals': 100000,
-            'nt_ordered': False,
-            'n_nonterminals': 15,
-            'seed': np.random.randint(0, 999999),
-            # 'within_overlap_prob': 0,
-            # 'cross_overlap_prob': 1,
-            'fix_size': 3,
-            'compress': True,
-            'rand_injection_prob': 0.5
-        },
-        non_causal_prompt=True
+            'lengths': 5,
+            'beta': 1,
+            'alphabet_size': 2
+        }
     )
-    # TODO: benchmark <-- STOPPED HERE
+
     ds, config = CopyDataset.from_config(config)
+    print(next(iter(ds)))
+
+
+
+    # config = TransformerConfig(
+    #     ds_generator_name='CfgGenerator',
+    #     ds_generator_kwargs={
+    #         # 'lengths': np.arange(5) + 1,
+    #         'lengths': [1,2,3],
+    #         't_lengths': 3,
+    #         'n_terminals': 100000,
+    #         'nt_ordered': False,
+    #         'n_nonterminals': 15,
+    #         'seed': np.random.randint(0, 999999),
+    #         # 'within_overlap_prob': 0,
+    #         # 'cross_overlap_prob': 1,
+    #         'fix_size': 3,
+    #         'compress': True,
+    #         'rand_injection_prob': 0.5
+    #     },
+    #     non_causal_prompt=True
+    # )
+    # ds, config = CopyDataset.from_config(config)
     
-    dl = to_dataloader(ds, batch_size=8)
-    print(next(iter(dl))['inputs'])
+    # dl = to_dataloader(ds, batch_size=8)
+    # print(next(iter(dl))['inputs'])
+
     # print(ds.gen.nt_to_ts)
     # print(ds.gen.all_terminals)
 # %%
