@@ -20,22 +20,17 @@ from bench_common import *
 from model import *
 from task.string_copy import *
 
-# n_iters=3
-n_iters=1
+n_iters=3
 
 alphabet_size = 2
-# max_train_len = 10
-max_train_len = 3
-# max_test_len = 30
-max_test_len = 5
+max_train_len = 10
+max_test_len = 30
 
-# train_iters = 30_000
-train_iters = 100
+train_iters = 30_000
 
 batch_size = 128
 
-# betas = [0.5, 1, 2, 4, 8]
-betas = [1]
+betas = [0.5, 1, 2, 4, 8]
 
 def init_common_kwargs(alphabet_size=alphabet_size):
     return FrozenDict(
