@@ -20,11 +20,11 @@ from bench_common import *
 from model import *
 from task.string_copy import *
 
-n_iters=3
+n_iters = 5
 
-alphabet_size = 2
 max_train_len = 10
 max_test_len = 30
+alphabet_size = max_test_len
 
 train_iters = 30_000
 
@@ -150,14 +150,26 @@ def to_df(key):
     df = pd.concat(all_df)
     return df
 
-df = to_df('acc')
+df = to_df('acc_in_dist')
 
 # <codecell>
-plt.gcf().set_size_inches(28, 3)
-g = sns.boxplot(df, x='len', y='acc', hue='name')
-g.legend_.set_title('')
+def plot_bench(df):
+    plt.gcf().set_size_inches(28, 3)
+    g = sns.boxplot(df, x='len', y='acc', hue='name')
+    g.legend_.set_title('')
 
-g.axvline(9.5, color='red', linestyle='dashed')
+    g.axvline(9.5, color='red', linestyle='dashed')
 
-plt.tight_layout()
-plt.savefig('fig/gen_cfg_fixed.png')
+    plt.tight_layout()
+
+plot_bench(to_df('acc_in_dist'))
+plt.savefig('fig/bigram_acc_in_dist.png')
+plt.show()
+
+plot_bench(to_df('acc_count'))
+plt.savefig('fig/bigram_acc_count.png')
+plt.show()
+
+plot_bench(to_df('acc_random'))
+plt.savefig('fig/bigram_acc_random.png')
+plt.show()
