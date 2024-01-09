@@ -149,7 +149,6 @@ def to_df(key):
     df = pd.concat(all_df)
     return df
 
-# <codecell>
 def plot_bench(df):
     plt.gcf().set_size_inches(28, 3)
     g = sns.boxplot(df, x='len', y='acc', hue='name')
