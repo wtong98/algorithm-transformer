@@ -200,11 +200,11 @@ def from_config(ds_class, config: TransformerConfig, unify_config=True):
         
     return ds, config
 
-
+# TODO: consider whether it's ok to allow diagonal entries
 class BigramGenerator(BaseGenerator):
     def __init__(self, lengths, beta=1, alphabet_size=2,
              probs=None, sampling_strategy='zipf', 
-             seed=None):
+             seed=None, reset_rng_for_data=True):
 
         self.lengths = to_list(lengths)
         
@@ -214,6 +214,9 @@ class BigramGenerator(BaseGenerator):
         self.alphabet_size = alphabet_size
 
         self.build_lm()
+
+        if reset_rng_for_data:
+            self.rng = np.random.default_rng(None)
     
     def build_lm(self):
         # self.uni_probs = np.random.random(size=(self.alphabet_size))
@@ -221,7 +224,7 @@ class BigramGenerator(BaseGenerator):
         self.uni_probs = np.ones(self.alphabet_size)
         self.uni_probs = self.uni_probs / np.sum(self.uni_probs)
 
-        self.bi_probs = np.random.random(size=(self.alphabet_size, self.alphabet_size))
+        self.bi_probs = self.rng.random(size=(self.alphabet_size, self.alphabet_size))
         self.bi_probs = np.exp(-self.beta * self.bi_probs)
         self.bi_probs = self.bi_probs / np.sum(self.bi_probs, axis=1, keepdims=True)
 
@@ -229,12 +232,12 @@ class BigramGenerator(BaseGenerator):
         self.joint_probs = self.bi_probs * uni_probs_tiled
     
     def sample_lm(self):
-        length = np.random.choice(self.lengths, p=self.probs)
-        toks = [np.random.choice(self.alphabet_size, p=self.uni_probs)]
+        length = self.rng.choice(self.lengths, p=self.probs)
+        toks = [self.rng.choice(self.alphabet_size, p=self.uni_probs)]
 
         while len(toks) < length:
             last_tok = toks[-1]
-            next_tok = np.random.choice(self.alphabet_size, p=self.bi_probs[last_tok,:])
+            next_tok = self.rng.choice(self.alphabet_size, p=self.bi_probs[last_tok,:])
             toks.append(next_tok)
         
         return toks
@@ -379,25 +382,24 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    # g = BigramGenerator(5, beta=1, alphabet_size=2)
-    # print(g.compute_entropy())
-    # print(g.joint_probs)
+    g = BigramGenerator(5, beta=256, alphabet_size=30, seed=3, reset_rng_for_data=True)
+    print(g.compute_entropy())
+    print(np.round(g.joint_probs, decimals=3))
 
-    # for _ in range(5):
-    #     print(next(g))
+    for _ in range(10):
+        print(next(g))
 
-    # TODO: plug into model and try for realsies <-- STOPPED HERE
-    config = TransformerConfig(
-        ds_generator_name='BigramGenerator',
-        ds_generator_kwargs={
-            'lengths': 5,
-            'beta': 1,
-            'alphabet_size': 2
-        }
-    )
+    # config = TransformerConfig(
+    #     ds_generator_name='BigramGenerator',
+    #     ds_generator_kwargs={
+    #         'lengths': 5,
+    #         'beta': 1,
+    #         'alphabet_size': 2
+    #     }
+    # )
 
-    ds, config = CopyDataset.from_config(config)
-    print(next(iter(ds)))
+    # ds, config = CopyDataset.from_config(config)
+    # print(next(iter(ds)))
 
 
 

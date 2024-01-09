@@ -23,14 +23,14 @@ from task.string_copy import *
 n_iters = 5
 
 max_train_len = 10
-max_test_len = 30
+max_test_len = 25
 alphabet_size = max_test_len
 
 train_iters = 30_000
 
 batch_size = 128
 
-betas = [0.5, 1, 2, 4, 8]
+betas = [1, 4, 16, 64, 256]
 
 def init_common_kwargs(alphabet_size=alphabet_size):
     return FrozenDict(
@@ -140,7 +140,6 @@ with open('save/remote/bigram_cases.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
-# <codecell>
 def to_df(key):
     all_df = []
     for case in all_cases:
@@ -149,8 +148,6 @@ def to_df(key):
         all_df.append(curr_df)
     df = pd.concat(all_df)
     return df
-
-df = to_df('acc_in_dist')
 
 # <codecell>
 def plot_bench(df):
