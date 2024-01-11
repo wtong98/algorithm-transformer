@@ -284,7 +284,7 @@ class AddPositionEmbs(nn.Module):
         else:
             pe = pos_embedding[:, :length, :]
         
-        if config.nope_embeding or config.rel_pos_att:
+        if config.nope_embedding or config.rel_pos_att:
             return inputs
         else:
             return inputs + pe
@@ -322,6 +322,9 @@ class TransformerBlock(nn.Module):
         assert inputs.ndim == 3
         x = SingleHeadSelfAttention(self.config)(inputs, decoder_mask, idxs=idxs)
         x = x + inputs
+
+        if self.config.layer_norm:
+            x = nn.LayerNorm()(x)
 
         return x
 
@@ -699,7 +702,7 @@ config = TransformerConfig(
     num_layers=3,
     rel_pos_att=False,
     non_causal_prompt=False,
-    nope_embeding=True,
+    nope_embedding=True,
 
     # ds_generator_name='CfgGenerator',
     # ds_generator_kwargs=FrozenDict({

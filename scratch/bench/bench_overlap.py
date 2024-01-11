@@ -50,7 +50,7 @@ for i in range(n_iters):
     all_cases.extend([
 
         Case(f'Within (p={p})', config=TransformerConfig(
-            nope_embeding=True,
+            nope_embedding=True,
             ds_generator_name='CfgGenerator',
             ds_generator_kwargs=FrozenDict(within_overlap_prob=p, **init_common_kwargs()),
         ), save_dir=f'cfg_within_{p}_{i}')
@@ -60,7 +60,7 @@ for i in range(n_iters):
     all_cases.extend([
 
         Case(f'Cross (p={p})', config=TransformerConfig(
-            nope_embeding=True,
+            nope_embedding=True,
             ds_generator_name='CfgGenerator',
             ds_generator_kwargs=FrozenDict(cross_overlap_prob=p, **init_common_kwargs()),
         ), save_dir=f'cfg_cross_{p}_{i}')

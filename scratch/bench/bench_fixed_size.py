@@ -50,7 +50,7 @@ data_sizes = [128, 256, 512, 1024, 2048, 4096, None]
 for i in range(n_iters):
     all_cases.extend([
         Case(f'CFG (d={d})', config=TransformerConfig(
-            nope_embeding=True,
+            nope_embedding=True,
             ds_generator_name='CfgGenerator',
             ds_generator_kwargs=FrozenDict(fix_size=d, **init_common_kwargs()),
         ), save_dir=f'cfg_fixed_{d}_{i}')
@@ -147,7 +147,7 @@ plt.savefig('fig/cfg_fixed_obs_examples.png')
 
 config = TransformerConfig(
     num_layers=3,
-    nope_embeding=True,
+    nope_embedding=True,
 
     ds_generator_name='CfgGenerator',
     ds_generator_kwargs=FrozenDict({

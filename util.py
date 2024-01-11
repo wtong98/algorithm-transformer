@@ -26,6 +26,7 @@ class TransformerConfig:
     emb_dim: int = 128
     mlp_dim: int = 128
     max_len: int = 256
+    layer_norm: bool = False
     causal: bool = True
     non_causal_prompt: bool = False
     include_bos: bool = True
@@ -40,7 +41,7 @@ class TransformerConfig:
     max_item_label: int = -1
     freeze_embedding: bool = False
     sinus_embedding: bool = False
-    nope_embeding: bool = False
+    nope_embedding: bool = False
     rel_pos_att: bool = False
     rel_pos_rand_max: int = 0
 

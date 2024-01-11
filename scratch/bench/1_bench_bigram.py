@@ -39,6 +39,11 @@ def init_common_kwargs(alphabet_size=alphabet_size):
         seed=new_seed()
     )
 
+common_configs = {
+    'nope_embedding': True,
+    'layer_norm': True
+}
+
 save_prefix = 'save/'
 scratch_dir = os.getenv('SCRATCH')
 if scratch_dir is not None:
@@ -52,33 +57,33 @@ all_cases = []
 for i in range(n_iters):
     random_case = [
         Case('Random', config=TransformerConfig(
-            nope_embeding=True,
             ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(**init_common_kwargs())
+            ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
+            **common_configs
         ), save_dir=f'random_{i}')
     ]
 
     bigram_cases = [
         Case(f'Bigram (beta={b})', config=TransformerConfig(
-            nope_embeding=True,
             ds_generator_name='BigramGenerator',
             ds_generator_kwargs=FrozenDict(beta=b, **init_common_kwargs()),
+            **common_configs
         ), save_dir=f'bigram_{b}_{i}')
     for b in betas]
 
     structured_case = [
         Case('Uniq and Ord', config=TransformerConfig(
-            nope_embeding=True,
             ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(ordered=True, unique=True, **init_common_kwargs(max_test_len))
+            ds_generator_kwargs=FrozenDict(ordered=True, unique=True, **init_common_kwargs(max_test_len)),
+            **common_configs
         ), save_dir=f'ord_and_uniq_{i}')
     ]
 
     same_case = [
         Case('Same', config=TransformerConfig(
-            nope_embeding=True,
             ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(**init_common_kwargs(1))
+            ds_generator_kwargs=FrozenDict(**init_common_kwargs(1)),
+            **common_configs
         ), save_dir=f'count_{i}')
     ]
 
@@ -151,7 +156,7 @@ def to_df(key):
 
 def plot_bench(df):
     plt.gcf().set_size_inches(28, 3)
-    g = sns.boxplot(df, x='len', y='acc', hue='name')
+    g = sns.barplot(df, x='len', y='acc', hue='name')
     g.legend_.set_title('')
 
     g.axvline(9.5, color='red', linestyle='dashed')

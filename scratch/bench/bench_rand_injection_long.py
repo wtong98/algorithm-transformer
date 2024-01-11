@@ -49,7 +49,7 @@ ps = [0, 0.25, 0.5, 0.75, 1]
 for i in range(n_iters):
     all_cases.extend([
         Case(f'Rand (p={p}, l<={l})', config=TransformerConfig(
-            nope_embeding=True,
+            nope_embedding=True,
             ds_generator_name='CfgGenerator',
             ds_generator_kwargs=FrozenDict(rand_injection_prob=p, lengths=tuple(range(1, l+1)), **init_common_kwargs()),
         ), save_dir=f'cfg_rand_{p}_{l}_{i}')
