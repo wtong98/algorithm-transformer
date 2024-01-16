@@ -200,10 +200,9 @@ def from_config(ds_class, config: TransformerConfig, unify_config=True):
         
     return ds, config
 
-# TODO: consider whether it's ok to allow diagonal entries
 class BigramGenerator(BaseGenerator):
     def __init__(self, lengths, beta=1, alphabet_size=2,
-             probs=None, sampling_strategy='zipf', 
+             probs=None, sampling_strategy='zipf', transition_constraint=None,
              seed=None, reset_rng_for_data=True):
 
         self.lengths = to_list(lengths)
@@ -212,6 +211,7 @@ class BigramGenerator(BaseGenerator):
         self.beta = beta
         self.rng = np.random.default_rng(seed)
         self.alphabet_size = alphabet_size
+        self.transition_constraint = transition_constraint
 
         self.build_lm()
 
@@ -225,6 +225,19 @@ class BigramGenerator(BaseGenerator):
         self.uni_probs = self.uni_probs / np.sum(self.uni_probs)
 
         self.bi_probs = self.rng.random(size=(self.alphabet_size, self.alphabet_size))
+
+        if self.transition_constraint is not None:
+            if self.transition_constraint == 'ordered_sink':
+                self.bi_probs = np.triu(self.bi_probs, k=1)
+                self.bi_probs[self.bi_probs==0] = np.inf
+                self.bi_probs[-1][-1] = 1  # last token is a sink
+            elif self.transition_constraint == 'ordered_loop':
+                self.bi_probs = np.triu(self.bi_probs, k=1)
+                self.bi_probs[self.bi_probs==0] = np.inf
+                self.bi_probs[-1][0] = 1  # last token wraps to first token
+            else:
+                raise ValueError(f'unrecognized transition constraint: {self.transition_constraint}')
+
         self.bi_probs = np.exp(-self.beta * self.bi_probs)
         self.bi_probs = self.bi_probs / np.sum(self.bi_probs, axis=1, keepdims=True)
 
@@ -243,7 +256,7 @@ class BigramGenerator(BaseGenerator):
         return toks
     
     def compute_entropy(self):
-        return -np.sum(self.joint_probs * np.log(self.joint_probs))
+        return -np.sum(self.joint_probs * np.log(self.joint_probs + 1e-32))
     
     def __next__(self):
         toks = self.sample_lm()
@@ -382,7 +395,7 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    g = BigramGenerator(5, beta=256, alphabet_size=30, seed=3, reset_rng_for_data=True)
+    g = BigramGenerator(5, transition_constraint='ordered_sink', beta=1, alphabet_size=10, seed=3, reset_rng_for_data=True)
     print(g.compute_entropy())
     print(np.round(g.joint_probs, decimals=3))
 

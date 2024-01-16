@@ -1,6 +1,6 @@
 """
-Training the model on a simple bigram language model to observe generalization
-performance as a function of bigram entropy.
+Experimenting with constraints on bigram transition matrix to create different
+copying patterns
 
 author: William Tong (wtong@g.harvard.edu)
 """
@@ -21,16 +21,20 @@ from model import *
 from task.string_copy import *
 
 n_iters = 5
-
 max_train_len = 10
 max_test_len = 25
 alphabet_size = max_test_len
-
-train_iters = 30_000
-
+train_iters = 50_000
 batch_size = 128
+betas = [1, 256]
 
-betas = [1, 4, 16, 64, 256]
+# n_iters = 1
+# max_train_len = 3
+# max_test_len = 5
+# alphabet_size = max_test_len
+# train_iters = 3_000
+# batch_size = 128
+# betas = [1]
 
 def init_common_kwargs(alphabet_size=alphabet_size):
     return FrozenDict(
@@ -62,12 +66,20 @@ for i in range(n_iters):
         ), save_dir=f'random_{i}')
     ]
 
-    bigram_cases = [
-        Case(f'Bigram (beta={b})', config=TransformerConfig(
+    bigram_cases_sink = [
+        Case(f'Bigram (sink, beta={b})', config=TransformerConfig(
             ds_generator_name='BigramGenerator',
-            ds_generator_kwargs=FrozenDict(beta=b, **init_common_kwargs()),
+            ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='ordered_sink', **init_common_kwargs()),
             **common_configs
-        ), save_dir=f'bigram_{b}_{i}')
+        ), save_dir=f'bigram_sink_{b}_{i}')
+    for b in betas]
+
+    bigram_cases_loop = [
+        Case(f'Bigram (loop, beta={b})', config=TransformerConfig(
+            ds_generator_name='BigramGenerator',
+            ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='ordered_loop', **init_common_kwargs()),
+            **common_configs
+        ), save_dir=f'bigram_loop_{b}_{i}')
     for b in betas]
 
     structured_case = [
@@ -86,7 +98,7 @@ for i in range(n_iters):
         ), save_dir=f'count_{i}')
     ]
 
-    all_cases.extend(random_case + bigram_cases + structured_case + same_case)
+    all_cases.extend(random_case + bigram_cases_sink + bigram_cases_loop + structured_case + same_case)
 
 
 for case in all_cases:
@@ -132,7 +144,7 @@ for case in all_cases:
 
 
 # <codecell>
-with open('save/bigram_cases.pkl', 'wb') as fp:
+with open('save/bigram_cases_constrained.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
 if scratch_dir is not None:
@@ -140,7 +152,7 @@ if scratch_dir is not None:
 
 # <codecell>
 # with open('save/cases.pkl', 'rb') as fp:
-with open('save/remote/bigram_cases.pkl', 'rb') as fp:
+with open('save/remote/bigram_cases_constrained.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
