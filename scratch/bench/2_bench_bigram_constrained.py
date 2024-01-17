@@ -27,6 +27,7 @@ alphabet_size = max_test_len
 train_iters = 50_000
 batch_size = 128
 betas = [1, 256]
+triangle_factors = [1, 2, 4, 8]
 
 # n_iters = 1
 # max_train_len = 3
@@ -34,7 +35,7 @@ betas = [1, 256]
 # alphabet_size = max_test_len
 # train_iters = 3_000
 # batch_size = 128
-# betas = [1]
+# triangle_factors = [2]
 
 def init_common_kwargs(alphabet_size=alphabet_size):
     return FrozenDict(
@@ -66,21 +67,30 @@ for i in range(n_iters):
         ), save_dir=f'random_{i}')
     ]
 
-    bigram_cases_sink = [
-        Case(f'Bigram (sink, beta={b})', config=TransformerConfig(
-            ds_generator_name='BigramGenerator',
-            ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='ordered_sink', **init_common_kwargs()),
-            **common_configs
-        ), save_dir=f'bigram_sink_{b}_{i}')
-    for b in betas]
+    # bigram_cases_sink = [
+    #     Case(f'Bigram (sink, beta={b})', config=TransformerConfig(
+    #         ds_generator_name='BigramGenerator',
+    #         ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='ordered_sink', **init_common_kwargs()),
+    #         **common_configs
+    #     ), save_dir=f'bigram_sink_{b}_{i}')
+    # for b in betas]
 
-    bigram_cases_loop = [
-        Case(f'Bigram (loop, beta={b})', config=TransformerConfig(
+    # bigram_cases_loop = [
+    #     Case(f'Bigram (loop, beta={b})', config=TransformerConfig(
+    #         ds_generator_name='BigramGenerator',
+    #         ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='ordered_loop', **init_common_kwargs()),
+    #         **common_configs
+    #     ), save_dir=f'bigram_loop_{b}_{i}')
+    # for b in betas]
+
+    bigram_cases = [
+        Case(f'Bigram (triangle, factor={f})', config=TransformerConfig(
             ds_generator_name='BigramGenerator',
-            ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='ordered_loop', **init_common_kwargs()),
+            ds_generator_kwargs=FrozenDict(triangle_factor=f, transition_constraint='triangle', **init_common_kwargs()),
             **common_configs
-        ), save_dir=f'bigram_loop_{b}_{i}')
-    for b in betas]
+        ), save_dir=f'bigram_tri_{f}_{i}')
+    for f in triangle_factors]
+
 
     structured_case = [
         Case('Uniq and Ord', config=TransformerConfig(
@@ -98,7 +108,7 @@ for i in range(n_iters):
         ), save_dir=f'count_{i}')
     ]
 
-    all_cases.extend(random_case + bigram_cases_sink + bigram_cases_loop + structured_case + same_case)
+    all_cases.extend(random_case + bigram_cases + structured_case + same_case)
 
 
 for case in all_cases:
@@ -106,7 +116,7 @@ for case in all_cases:
     case.train_iters = train_iters
 
 # <codecell>
-run_train(all_cases, skip_existing=False)
+run_train(all_cases, skip_existing=True)
 
 # <codecell>
 for case in all_cases:
@@ -175,13 +185,13 @@ def plot_bench(df):
     plt.tight_layout()
 
 plot_bench(to_df('acc_in_dist'))
-plt.savefig('fig/bigram_acc_in_dist_ln.png')
+plt.savefig('fig/bigram_acc_in_dist_constrained.png')
 plt.show()
 
 plot_bench(to_df('acc_count'))
-plt.savefig('fig/bigram_acc_count_ln.png')
+plt.savefig('fig/bigram_acc_count_constrained.png')
 plt.show()
 
 plot_bench(to_df('acc_random'))
-plt.savefig('fig/bigram_acc_random_ln.png')
+plt.savefig('fig/bigram_acc_random_constrained.png')
 plt.show()
