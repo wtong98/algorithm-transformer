@@ -20,22 +20,22 @@ from bench_common import *
 from model import *
 from task.string_copy import *
 
-n_iters = 5
-max_train_len = 10
-max_test_len = 25
-alphabet_size = max_test_len
-train_iters = 50_000
-batch_size = 128
-betas = [1, 256]
-triangle_factors = [1, 2, 4, 8]
-
-# n_iters = 1
-# max_train_len = 3
-# max_test_len = 5
+# n_iters = 5
+# max_train_len = 10
+# max_test_len = 25
 # alphabet_size = max_test_len
-# train_iters = 3_000
+# train_iters = 50_000
 # batch_size = 128
-# triangle_factors = [2]
+# betas = [0.06, 0.12, 0.25, 0.5, 1]
+# triangle_factors = [1, 2, 4, 8]
+
+n_iters = 1
+max_train_len = 3
+max_test_len = 5
+alphabet_size = max_test_len
+train_iters = 3_000
+batch_size = 128
+betas = [0.5]
 
 def init_common_kwargs(alphabet_size=alphabet_size):
     return FrozenDict(
@@ -83,13 +83,21 @@ for i in range(n_iters):
     #     ), save_dir=f'bigram_loop_{b}_{i}')
     # for b in betas]
 
+    # bigram_cases = [
+    #     Case(f'Bigram (triangle, factor={f})', config=TransformerConfig(
+    #         ds_generator_name='BigramGenerator',
+    #         ds_generator_kwargs=FrozenDict(triangle_factor=f, transition_constraint='triangle', **init_common_kwargs()),
+    #         **common_configs
+    #     ), save_dir=f'bigram_tri_{f}_{i}')
+    # for f in triangle_factors]
+
     bigram_cases = [
-        Case(f'Bigram (triangle, factor={f})', config=TransformerConfig(
+        Case(f'Bigram (power, beta={b})', config=TransformerConfig(
             ds_generator_name='BigramGenerator',
-            ds_generator_kwargs=FrozenDict(triangle_factor=f, transition_constraint='triangle', **init_common_kwargs()),
+            ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='power', **init_common_kwargs()),
             **common_configs
-        ), save_dir=f'bigram_tri_{f}_{i}')
-    for f in triangle_factors]
+        ), save_dir=f'bigram_pow_{b}_{i}')
+    for b in betas]
 
 
     structured_case = [
@@ -195,3 +203,4 @@ plt.show()
 plot_bench(to_df('acc_random'))
 plt.savefig('fig/bigram_acc_random_constrained.png')
 plt.show()
+# %%

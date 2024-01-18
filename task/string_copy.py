@@ -226,7 +226,19 @@ class BigramGenerator(BaseGenerator):
         self.uni_probs = np.ones(self.alphabet_size)
         self.uni_probs = self.uni_probs / np.sum(self.uni_probs)
 
-        if self.transition_constraint == 'triangle':
+        if self.transition_constraint == 'power':
+            self.uni_probs = 1 / np.arange(1, self.alphabet_size + 1)
+            # self.uni_probs = np.exp(-0.05 * self.uni_probs)
+            self.uni_probs = self.uni_probs / np.sum(self.uni_probs)
+
+            self.bi_probs = np.ones((self.alphabet_size, self.alphabet_size)) * (self.alphabet_size - 1)
+
+            for row in range(self.alphabet_size):
+                for col in range(self.alphabet_size):
+                    if col > row:
+                        self.bi_probs[row,col] = col - row - 1
+
+        elif self.transition_constraint == 'triangle':
             self.bi_probs = np.ones((self.alphabet_size, self.alphabet_size))
             self.bi_probs = np.triu(self.bi_probs, k=1)
             self.bi_probs[self.bi_probs==0] = self.triangle_factor
@@ -401,7 +413,7 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    g = BigramGenerator(5, transition_constraint='triangle', triangle_factor=8, beta=1, alphabet_size=10, seed=3, reset_rng_for_data=True)
+    g = BigramGenerator(5, transition_constraint='power', triangle_factor=8, beta=0.1, alphabet_size=30, seed=3, reset_rng_for_data=True)
     print(g.compute_entropy())
     print(np.round(g.joint_probs, decimals=3))
 
