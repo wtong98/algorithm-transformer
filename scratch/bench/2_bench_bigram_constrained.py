@@ -20,22 +20,22 @@ from bench_common import *
 from model import *
 from task.string_copy import *
 
-# n_iters = 5
-# max_train_len = 10
-# max_test_len = 25
-# alphabet_size = max_test_len
-# train_iters = 50_000
-# batch_size = 128
-# betas = [0.06, 0.12, 0.25, 0.5, 1]
+n_iters = 5
+max_train_len = 10
+max_test_len = 25
+alphabet_size = max_test_len
+train_iters = 50_000
+batch_size = 128
+betas = [0.06, 0.12, 0.25, 0.5, 1]
 # triangle_factors = [1, 2, 4, 8]
 
-n_iters = 1
-max_train_len = 3
-max_test_len = 5
-alphabet_size = max_test_len
-train_iters = 3_000
-batch_size = 128
-betas = [0.5]
+# n_iters = 1
+# max_train_len = 3
+# max_test_len = 5
+# alphabet_size = max_test_len
+# train_iters = 3_000
+# batch_size = 128
+# betas = [0.5]
 
 def init_common_kwargs(alphabet_size=alphabet_size):
     return FrozenDict(
