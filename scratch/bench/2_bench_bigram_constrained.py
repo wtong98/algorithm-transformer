@@ -28,7 +28,7 @@ train_iters = 50_000
 batch_size = 128
 # betas = [0.06, 0.12, 0.25, 0.5, 1]
 # triangle_factors = [1, 2, 4, 8]
-ps = [1, 0.75, 0.5, 0.25, 0]
+ps = [1, 0.75, 0.5, 0.25, 0.15, 0.1, 0.05, 0]
 
 # n_iters = 1
 # max_train_len = 3
@@ -179,7 +179,7 @@ if scratch_dir is not None:
 
 # <codecell>
 # with open('save/cases.pkl', 'rb') as fp:
-with open('save/remote/bigram_cases_constrained_power.pkl', 'rb') as fp:
+with open('save/remote/rand_replace.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
@@ -202,14 +202,14 @@ def plot_bench(df):
     plt.tight_layout()
 
 plot_bench(to_df('acc_in_dist'))
-plt.savefig('fig/bigram_acc_in_dist_constrained_power.png')
+plt.savefig('fig/rand_replace_in_dist.png')
 plt.show()
 
 plot_bench(to_df('acc_count'))
-plt.savefig('fig/bigram_acc_count_constrained_power.png')
+plt.savefig('fig/rand_replace_count.png')
 plt.show()
 
 plot_bench(to_df('acc_random'))
-plt.savefig('fig/bigram_acc_random_constrained_power.png')
+plt.savefig('fig/rand_replace_random.png')
 plt.show()
 # %%
