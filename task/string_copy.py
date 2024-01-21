@@ -44,11 +44,21 @@ class BaseGenerator:
 
     def __next__(self):
         raise NotImplementedError('__next__ not implemented for BaseGenerator')
+
+
+class InterleaveGenerator:
+    def __init__(self, gens, probs) -> None:
+        self.gens = gens
+        self.probs = probs
     
+    def __next__(self):
+        idx = np.random.choice(len(self.gens), p=self.probs)
+        return next(self.gens[idx])
+
 
 class RandomGenerator(BaseGenerator):
     def __init__(self, lengths, alphabet_size=2,
-             ordered=False, unique=False,
+             ordered=False, unique=False, p_replace_rand=0,
              probs=None, sampling_strategy='zipf', 
              seed=None):
 
@@ -58,6 +68,7 @@ class RandomGenerator(BaseGenerator):
             raise ValueError('tokens are supposed to be unique, but maximum length exceeds vocab size')
         
         self.probs = parse_sampling_strategy(probs, self.lengths, sampling_strategy)
+        self.p_replace_rand = p_replace_rand
         self.ordered = ordered
         self.unique = unique
         self.rng = np.random.default_rng(seed)
@@ -68,6 +79,10 @@ class RandomGenerator(BaseGenerator):
         pattern = self.rng.choice(self.alphabet_size, size=length, replace=not self.unique)
         if self.ordered:
             pattern = np.sort(pattern)
+        
+        if self.p_replace_rand > 0:
+            replace_idxs = self.rng.binomial(n=1, p=self.p_replace_rand, size=length)
+            pattern[replace_idxs.astype(bool)] = self.rng.choice(self.alphabet_size, size=np.sum(replace_idxs), replace=True)
         
         return {'pattern': pattern}
 
@@ -199,6 +214,7 @@ def from_config(ds_class, config: TransformerConfig, unify_config=True):
             config = config.replace(max_item_label=gen.max_item_label)
         
     return ds, config
+
 
 class BigramGenerator(BaseGenerator):
     def __init__(self, lengths, beta=1, alphabet_size=2,
@@ -413,12 +429,15 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    g = BigramGenerator(5, transition_constraint='power', triangle_factor=8, beta=0.1, alphabet_size=30, seed=3, reset_rng_for_data=True)
-    print(g.compute_entropy())
-    print(np.round(g.joint_probs, decimals=3))
+    g = RandomGenerator(lengths=[10], alphabet_size=20, unique=True, ordered=True, p_replace_rand=0.5)
+    print(next(g))
 
-    for _ in range(10):
-        print(next(g))
+    # g = BigramGenerator(5, transition_constraint='power', triangle_factor=8, beta=0.1, alphabet_size=30, seed=3, reset_rng_for_data=True)
+    # print(g.compute_entropy())
+    # print(np.round(g.joint_probs, decimals=3))
+
+    # for _ in range(10):
+    #     print(next(g))
 
     # config = TransformerConfig(
     #     ds_generator_name='BigramGenerator',

@@ -26,8 +26,9 @@ max_test_len = 25
 alphabet_size = max_test_len
 train_iters = 50_000
 batch_size = 128
-betas = [0.06, 0.12, 0.25, 0.5, 1]
+# betas = [0.06, 0.12, 0.25, 0.5, 1]
 # triangle_factors = [1, 2, 4, 8]
+ps = [1, 0.75, 0.5, 0.25, 0]
 
 # n_iters = 1
 # max_train_len = 3
@@ -35,7 +36,7 @@ betas = [0.06, 0.12, 0.25, 0.5, 1]
 # alphabet_size = max_test_len
 # train_iters = 3_000
 # batch_size = 128
-# betas = [0.5]
+# ps = [0.5]
 
 def init_common_kwargs(alphabet_size=alphabet_size):
     return FrozenDict(
@@ -59,13 +60,13 @@ if scratch_dir is not None:
 all_cases = []
 
 for i in range(n_iters):
-    random_case = [
-        Case('Random', config=TransformerConfig(
-            ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
-            **common_configs
-        ), save_dir=f'random_{i}')
-    ]
+    # random_case = [
+    #     Case('Random', config=TransformerConfig(
+    #         ds_generator_name='RandomGenerator',
+    #         ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
+    #         **common_configs
+    #     ), save_dir=f'random_{i}')
+    # ]
 
     # bigram_cases_sink = [
     #     Case(f'Bigram (sink, beta={b})', config=TransformerConfig(
@@ -91,22 +92,30 @@ for i in range(n_iters):
     #     ), save_dir=f'bigram_tri_{f}_{i}')
     # for f in triangle_factors]
 
-    bigram_cases = [
-        Case(f'Bigram (power, beta={b})', config=TransformerConfig(
-            ds_generator_name='BigramGenerator',
-            ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='power', **init_common_kwargs()),
-            **common_configs
-        ), save_dir=f'bigram_pow_{b}_{i}')
-    for b in betas]
+    # bigram_cases = [
+    #     Case(f'Bigram (power, beta={b})', config=TransformerConfig(
+    #         ds_generator_name='BigramGenerator',
+    #         ds_generator_kwargs=FrozenDict(beta=b, transition_constraint='power', **init_common_kwargs()),
+    #         **common_configs
+    #     ), save_dir=f'bigram_pow_{b}_{i}')
+    # for b in betas]
 
-
-    structured_case = [
-        Case('Uniq and Ord', config=TransformerConfig(
+    rand_replace_cases = [
+        Case(f'Rand replace (p={p})', config=TransformerConfig(
             ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(ordered=True, unique=True, **init_common_kwargs(max_test_len)),
+            ds_generator_kwargs=FrozenDict(p_replace_rand=p, ordered=True, unique=True, **init_common_kwargs()),
             **common_configs
-        ), save_dir=f'ord_and_uniq_{i}')
-    ]
+        ), save_dir=f'rand_replace_{p}_{i}')
+    for p in ps]
+
+
+    # structured_case = [
+    #     Case('Uniq and Ord', config=TransformerConfig(
+    #         ds_generator_name='RandomGenerator',
+    #         ds_generator_kwargs=FrozenDict(ordered=True, unique=True, **init_common_kwargs(max_test_len)),
+    #         **common_configs
+    #     ), save_dir=f'ord_and_uniq_{i}')
+    # ]
 
     same_case = [
         Case('Same', config=TransformerConfig(
@@ -116,7 +125,7 @@ for i in range(n_iters):
         ), save_dir=f'count_{i}')
     ]
 
-    all_cases.extend(random_case + bigram_cases + structured_case + same_case)
+    all_cases.extend(rand_replace_cases + same_case)
 
 
 for case in all_cases:
@@ -170,7 +179,7 @@ if scratch_dir is not None:
 
 # <codecell>
 # with open('save/cases.pkl', 'rb') as fp:
-with open('save/remote/bigram_cases_constrained.pkl', 'rb') as fp:
+with open('save/remote/bigram_cases_constrained_power.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
@@ -193,14 +202,14 @@ def plot_bench(df):
     plt.tight_layout()
 
 plot_bench(to_df('acc_in_dist'))
-plt.savefig('fig/bigram_acc_in_dist_constrained.png')
+plt.savefig('fig/bigram_acc_in_dist_constrained_power.png')
 plt.show()
 
 plot_bench(to_df('acc_count'))
-plt.savefig('fig/bigram_acc_count_constrained.png')
+plt.savefig('fig/bigram_acc_count_constrained_power.png')
 plt.show()
 
 plot_bench(to_df('acc_random'))
-plt.savefig('fig/bigram_acc_random_constrained.png')
+plt.savefig('fig/bigram_acc_random_constrained_power.png')
 plt.show()
 # %%
