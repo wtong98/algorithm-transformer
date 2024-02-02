@@ -179,7 +179,7 @@ if scratch_dir is not None:
 
 # <codecell>
 # with open('save/cases.pkl', 'rb') as fp:
-with open('save/remote/rand_replace.pkl', 'rb') as fp:
+with open('save/remote/rand_replace_ext.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
 # <codecell>
@@ -202,14 +202,14 @@ def plot_bench(df):
     plt.tight_layout()
 
 plot_bench(to_df('acc_in_dist'))
-plt.savefig('fig/rand_replace_in_dist.png')
+plt.savefig('fig/rand_replace_in_dist_ext.png')
 plt.show()
 
 plot_bench(to_df('acc_count'))
-plt.savefig('fig/rand_replace_count.png')
+plt.savefig('fig/rand_replace_count_ext.png')
 plt.show()
 
 plot_bench(to_df('acc_random'))
-plt.savefig('fig/rand_replace_random.png')
+plt.savefig('fig/rand_replace_random_ext.png')
 plt.show()
 # %%

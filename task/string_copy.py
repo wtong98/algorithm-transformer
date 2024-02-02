@@ -5,9 +5,11 @@ A simple copying task
 # <codecell>
 import sys
 
+from datasets import load_dataset
 import jax.numpy as jnp
 import numpy as np
 from torch.utils.data import IterableDataset, DataLoader, get_worker_info
+from transformers import AutoTokenizer
 
 import sys
 sys.path.append('../')
@@ -297,22 +299,74 @@ class BigramGenerator(BaseGenerator):
         return {'pattern': toks}
 
 
+class WikitextGenerator(BaseGenerator):
+    def __init__(self, lengths, split='train', cache_dir=None, num_shards=128, sampling_strategy='zipf'):
+        self.tokenizer = AutoTokenizer.from_pretrained('gpt2')
+        self.end_tok = self.tokenizer.vocab['<|endoftext|>']
+
+        self.lengths = to_list(lengths)
+        self.probs = parse_sampling_strategy(None, self.lengths, sampling_strategy)
+
+        def to_tok(ex):
+            return self.tokenizer(ex['text'])
+        
+        def to_copy_pattern(ex):
+            length = 1 + np.random.choice(self.lengths, p=self.probs)
+            sample = ex['input_ids'][:length]
+            ex['pattern'] = sample
+            return ex
+        
+        self.dataset = load_dataset('wikitext', 'wikitext-103-v1', split=split, cache_dir=cache_dir) \
+                        .to_iterable_dataset(num_shards=num_shards) \
+                        .map(to_tok, batched=True) \
+                        .map(to_copy_pattern) \
+                        .filter(lambda row: len(row['pattern']) > 0) \
+                        .shuffle()
+        
+        self._it = iter(self.dataset)
+
+        self.special_token_override = self.end_tok
+        self.n_symbols = self.tokenizer.vocab_size
+    
+    def __next__(self):
+        try:
+            return next(self._it)
+        except StopIteration:
+            print('========== SHUFFLE! ===========')
+            self.dataset = self.dataset.shuffle()
+            self._it = iter(self.dataset)
+
+
 class CopyDataset(IterableDataset):
     def __init__(self, generator: BaseGenerator, bos=True, prompt_mask=False) -> None:
         self.gen = generator
         self.bos = bos
         self.prompt_mask = prompt_mask
 
-        self.vocab_toks = [chr(start_char + i) for i in range(self.gen.alphabet_size)]
-        self.idx_to_tok = [
-            'PAD',
-            'GO',
-            'END',
-            'START'
-        ] + self.vocab_toks
-        self.tok_to_idx = {val:i for i, val in enumerate(self.idx_to_tok)}
-        self.n_symbols = len(self.idx_to_tok)
-        self.start_symbol_idx = self.tok_to_idx[self.vocab_toks[0]]
+        if hasattr(self.gen, 'special_token_override'):
+            special_token_override = self.gen.special_token_override
+
+            self.tok_to_idx = {
+                'PAD': special_token_override,
+                'GO': special_token_override,
+                'END': special_token_override,
+                'START': special_token_override,
+            }
+
+            self.start_symbol_idx = 0
+            self.n_symbols = self.gen.n_symbols
+
+        else:
+            self.vocab_toks = [chr(start_char + i) for i in range(self.gen.alphabet_size)]
+            self.idx_to_tok = [
+                'PAD',
+                'GO',
+                'END',
+                'START'
+            ] + self.vocab_toks
+            self.tok_to_idx = {val:i for i, val in enumerate(self.idx_to_tok)}
+            self.n_symbols = len(self.idx_to_tok)
+            self.start_symbol_idx = self.tok_to_idx[self.vocab_toks[0]]
     
     @staticmethod
     def from_config(config: TransformerConfig, unify_config=True):
@@ -349,7 +403,7 @@ class CopyDataset(IterableDataset):
         pred_prompt_mask = None
         if self.prompt_mask:
             pred_prompt_mask = np.concatenate((
-                [1] if self.bos else[],
+                [1] if self.bos else [],
                 pattern_mask,
                 [1],
                 0 * pattern_mask,
@@ -429,27 +483,25 @@ def to_dataloader(ds, batch_size=32, **kwargs):
     return dl
 
 if __name__ == '__main__':
-    g = RandomGenerator(lengths=[10], alphabet_size=20, unique=True, ordered=True, p_replace_rand=0.5)
-    print(next(g))
+    # g = RandomGenerator(lengths=[10], alphabet_size=20, unique=True, ordered=True, p_replace_rand=0.5)
+    # print(next(g))
 
-    # g = BigramGenerator(5, transition_constraint='power', triangle_factor=8, beta=0.1, alphabet_size=30, seed=3, reset_rng_for_data=True)
+    # g = BigramGenerator(5, transition_constraint='triangle', triangle_factor=8, beta=1, alphabet_size=10, seed=3, reset_rng_for_data=True)
     # print(g.compute_entropy())
     # print(np.round(g.joint_probs, decimals=3))
 
     # for _ in range(10):
     #     print(next(g))
 
-    # config = TransformerConfig(
-    #     ds_generator_name='BigramGenerator',
-    #     ds_generator_kwargs={
-    #         'lengths': 5,
-    #         'beta': 1,
-    #         'alphabet_size': 2
-    #     }
-    # )
+    config = TransformerConfig(
+        ds_generator_name='WikitextGenerator',
+        ds_generator_kwargs={
+            'lengths': [4, 5]
+        }
+    )
 
-    # ds, config = CopyDataset.from_config(config)
-    # print(next(iter(ds)))
+    ds, config = CopyDataset.from_config(config)
+    print(next(iter(ds)))
 
 
 
