@@ -5,6 +5,8 @@ author: William Tong (wtong@g.harvard.edu)
 """
 
 # <codecell>
+import pickle
+
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
@@ -15,16 +17,98 @@ sys.path.append('../../')
 from bench_common import *
 from model import *
 
+n_iters = 5
+max_train_len = 10
+max_test_len = 25
+train_iters = 50_000
+batch_size = 128
+
+
+save_prefix = 'save/'
+cache_dir = None
+
+scratch_dir = os.getenv('SCRATCH')
+if scratch_dir is not None:
+    save_prefix = scratch_dir +  '/pehlevan_lab/Lab/wlt/transformer/'
+    prefix_path = Path(save_prefix)
+    if not prefix_path.exists():
+        prefix_path.mkdir(parents=True)
+    
+    cache_dir = save_prefix + 'huggingface_cache'
+
+
+def init_common_kwargs():
+    return FrozenDict(
+        lengths=tuple(range(1, max_train_len+1)),
+        cache_dir=cache_dir
+    )
+
+common_configs = {
+    'nope_embedding': True
+}
+
+
+all_cases = []
+
+for i in range(n_iters):
+    all_cases.extend([
+        Case('Wikitext', config=TransformerConfig(
+            ds_generator_name='WikitextGenerator',
+            ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
+            **common_configs
+        ), save_dir=f'wikitext_{i}')
+    ])
+
+
+for case in all_cases:
+    case.save_dir = save_prefix + case.save_dir
+    case.train_iters = train_iters
+
+# <codecell>
+run_train(all_cases, skip_existing=False)
+
+# <codecell>
+for case in all_cases:
+    print('TESTING', case.name)
+    mngr = make_ckpt_manager(case.save_dir)
+    r = mngr.restore(mngr.best_step())
+    params = r['state']['params']
+
+    case.res['acc_in_dist'] = []
+    case.res['acc_random'] = []
+
+    for ex_len in tqdm(reversed(range(1, max_test_len + 1)), total=max_test_len):
+        random_config = case.config.replace(
+            ds_generator_name='RandomGenerator',
+            ds_generator_kwargs=FrozenDict(special_token_override=50256, n_symbols=50257, alphabet_size=50256)  # hardcoded from GPT-2 tokenizer
+        )
+
+        case.res['acc_in_dist'].append({'len': ex_len, 'acc': 
+                                        evaluate_acc(ex_len, params, case.config)})
+
+        case.res['acc_random'].append({'len': ex_len, 'acc': 
+                                        evaluate_acc(ex_len, params, random_config)})
+
+    jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
+
+
+# <codecell>
+with open('save/case_wikitext.pkl', 'wb') as fp:
+    pickle.dump(all_cases, fp)
+
+if scratch_dir is not None:
+    sys.exit(0)  # terminate now if on cluster
+
+
+# <codecell>
 tokenizer = AutoTokenizer.from_pretrained('gpt2')
 dataset = load_dataset('wikitext', 'wikitext-103-v1', split='train[:50000]')
-
 # <codecell>
 end_tok = tokenizer.vocab['<|endoftext|>']
 
 def to_tok(ex):
     return tokenizer(ex['text'])
 
-# TODO: consider subsetting rather than prefixing
 def to_copy_ex(ex, max_len=10):
     probs = 1 / np.arange(1, max_len + 1)
     probs = probs / np.sum(probs)
@@ -71,14 +155,15 @@ tokenizer.vocab_size
 
 # <codecell>
 config = TransformerConfig(
-    vocab_size=tokenizer.vocab_size,
-    num_layers=3,
-    emb_dim=128,
-    mlp_dim=128,
-    nope_embedding=True
+    num_layers=6,
+    emb_dim=512,
+    mlp_dim=512,
+    nope_embedding=True,
+    ds_generator_name='WikitextGenerator',
+    ds_generator_kwargs=FrozenDict({'lengths': tuple(np.arange(1, 11))})
 )
 
-
+ds, config = CopyDataset.from_config(config)
 train_dl = to_dataloader(ds, batch_size=128, pin_memory=True)
 
 state, info = train(config, train_dl, eval_dl=train_dl,

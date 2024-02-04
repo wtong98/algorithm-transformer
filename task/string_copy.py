@@ -61,7 +61,8 @@ class InterleaveGenerator:
 class RandomGenerator(BaseGenerator):
     def __init__(self, lengths, alphabet_size=2,
              ordered=False, unique=False, p_replace_rand=0,
-             probs=None, sampling_strategy='zipf', 
+             special_token_override=None, n_symbols=None,
+             probs=None, sampling_strategy='zipf',
              seed=None):
 
         self.lengths = to_list(lengths)
@@ -75,6 +76,9 @@ class RandomGenerator(BaseGenerator):
         self.unique = unique
         self.rng = np.random.default_rng(seed)
         self.alphabet_size = alphabet_size
+
+        self.special_token_override = special_token_override
+        self.n_symbols = n_symbols
     
     def __next__(self):
         length = self.rng.choice(self.lengths, p=self.probs)
@@ -335,6 +339,7 @@ class WikitextGenerator(BaseGenerator):
             print('========== SHUFFLE! ===========')
             self.dataset = self.dataset.shuffle()
             self._it = iter(self.dataset)
+            return next(self._it)
 
 
 class CopyDataset(IterableDataset):
@@ -343,7 +348,7 @@ class CopyDataset(IterableDataset):
         self.bos = bos
         self.prompt_mask = prompt_mask
 
-        if hasattr(self.gen, 'special_token_override'):
+        if hasattr(self.gen, 'special_token_override') and self.gen.special_token_override is not None:
             special_token_override = self.gen.special_token_override
 
             self.tok_to_idx = {
@@ -493,10 +498,20 @@ if __name__ == '__main__':
     # for _ in range(10):
     #     print(next(g))
 
+    # config = TransformerConfig(
+    #     ds_generator_name='WikitextGenerator',
+    #     ds_generator_kwargs={
+    #         'lengths': [4, 5]
+    #     }
+    # )
+
     config = TransformerConfig(
-        ds_generator_name='WikitextGenerator',
+        ds_generator_name='RandomGenerator',
         ds_generator_kwargs={
-            'lengths': [4, 5]
+            'lengths': [5],
+            'special_token_override': 50256,
+            'n_symbols': 50257,
+            'alphabet_size': 50256
         }
     )
 
