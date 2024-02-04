@@ -17,11 +17,21 @@ sys.path.append('../../')
 from bench_common import *
 from model import *
 
-n_iters = 5
+# run_id = new_seed()
+run_id = 1130 # NOTE: test seed (should use array parameter)
+print('RUN ID', run_id)
+
+n_iters = 1
 max_train_len = 10
 max_test_len = 25
-train_iters = 50_000
+train_iters = 100_000
 batch_size = 128
+
+# n_iters = 1
+# max_train_len = 3
+# max_test_len = 5
+# train_iters = 1_000
+# batch_size = 128
 
 
 save_prefix = 'save/'
@@ -55,8 +65,11 @@ for i in range(n_iters):
         Case('Wikitext', config=TransformerConfig(
             ds_generator_name='WikitextGenerator',
             ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
-            **common_configs
-        ), save_dir=f'wikitext_{i}')
+            num_layers=6,
+            emb_dim=1024,
+            mlp_dim=1024,
+            **common_configs,
+        ), save_dir=f'wikitext_{run_id}')
     ])
 
 
@@ -74,7 +87,8 @@ for case in all_cases:
     r = mngr.restore(mngr.best_step())
     params = r['state']['params']
 
-    case.res['acc_in_dist'] = []
+    case.res['acc_train'] = []
+    case.res['acc_test'] = []
     case.res['acc_random'] = []
 
     for ex_len in tqdm(reversed(range(1, max_test_len + 1)), total=max_test_len):
@@ -83,8 +97,15 @@ for case in all_cases:
             ds_generator_kwargs=FrozenDict(special_token_override=50256, n_symbols=50257, alphabet_size=50256)  # hardcoded from GPT-2 tokenizer
         )
 
-        case.res['acc_in_dist'].append({'len': ex_len, 'acc': 
+        test_config = case.config.replace(
+            ds_generator_kwargs=FrozenDict({'split': 'test'})
+        )
+
+        case.res['acc_train'].append({'len': ex_len, 'acc': 
                                         evaluate_acc(ex_len, params, case.config)})
+
+        case.res['acc_test'].append({'len': ex_len, 'acc': 
+                                        evaluate_acc(ex_len, params, test_config)})
 
         case.res['acc_random'].append({'len': ex_len, 'acc': 
                                         evaluate_acc(ex_len, params, random_config)})
@@ -93,7 +114,7 @@ for case in all_cases:
 
 
 # <codecell>
-with open('save/case_wikitext.pkl', 'wb') as fp:
+with open(f'save/case_wikitext.{run_id}.pkl', 'wb') as fp:
     pickle.dump(all_cases, fp)
 
 if scratch_dir is not None:
