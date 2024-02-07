@@ -22,7 +22,7 @@ class Case:
     fine_tune_split: float | None = None
 
 
-def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
+def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False, go_tok=1, end_tok=2):
     kwargs = config.ds_generator_kwargs.copy({'lengths': length})
     config = config.replace(ds_generator_kwargs=kwargs, vocab_size=params['Embed_0']['embedding'].shape[0])
     train_ds, config = CopyDataset.from_config(config, unify_config=False)
@@ -39,7 +39,7 @@ def evaluate_acc(length, params, config, n_examples=100, use_tqdm=False):
         prompt = ans[:len(ans)//2+offset]
 
         try:
-            pred = predict(prompt, params, config)
+            pred = predict(prompt, params, config, go_tok=go_tok, end_tok=end_tok)
 
         except Exception as e:
             print('failed to predict: ', e)

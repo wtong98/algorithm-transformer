@@ -66,8 +66,8 @@ for i in range(n_iters):
             ds_generator_name='WikitextGenerator',
             ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
             num_layers=6,
-            emb_dim=1024,
-            mlp_dim=1024,
+            emb_dim=512,
+            mlp_dim=4096,
             **common_configs,
         ), save_dir=f'wikitext_{run_id}')
     ])
@@ -81,6 +81,8 @@ for case in all_cases:
 run_train(all_cases, skip_existing=False)
 
 # <codecell>
+end_tok = 50256 # hardcoded from GPT-2 tokenizer
+
 for case in all_cases:
     print('TESTING', case.name)
     mngr = make_ckpt_manager(case.save_dir)
@@ -94,7 +96,7 @@ for case in all_cases:
     for ex_len in tqdm(reversed(range(1, max_test_len + 1)), total=max_test_len):
         random_config = case.config.replace(
             ds_generator_name='RandomGenerator',
-            ds_generator_kwargs=FrozenDict(special_token_override=50256, n_symbols=50257, alphabet_size=50256)  # hardcoded from GPT-2 tokenizer
+            ds_generator_kwargs=FrozenDict(special_token_override=end_tok, n_symbols=end_tok + 1, alphabet_size=end_tok)  # hardcoded from GPT-2 tokenizer
         )
 
         test_config = case.config.replace(
@@ -102,16 +104,15 @@ for case in all_cases:
         )
 
         case.res['acc_train'].append({'len': ex_len, 'acc': 
-                                        evaluate_acc(ex_len, params, case.config)})
+                                        evaluate_acc(ex_len, params, case.config, go_tok=end_tok, end_tok=end_tok)})
 
         case.res['acc_test'].append({'len': ex_len, 'acc': 
-                                        evaluate_acc(ex_len, params, test_config)})
+                                        evaluate_acc(ex_len, params, test_config, go_tok=end_tok, end_tok=end_tok)})
 
         case.res['acc_random'].append({'len': ex_len, 'acc': 
-                                        evaluate_acc(ex_len, params, random_config)})
+                                        evaluate_acc(ex_len, params, random_config, go_tok=end_tok, end_tok=end_tok)})
 
     jax.clear_caches()  # NOTE: jax currently leaks a lot of threads
-
 
 # <codecell>
 with open(f'save/case_wikitext.{run_id}.pkl', 'wb') as fp:
@@ -120,6 +121,12 @@ with open(f'save/case_wikitext.{run_id}.pkl', 'wb') as fp:
 if scratch_dir is not None:
     sys.exit(0)  # terminate now if on cluster
 
+
+# <codecell>
+with open('save/remote/case_wikitext.1130.pkl', 'rb') as fp:
+    all_cases = pickle.load(fp)
+
+all_cases
 
 # <codecell>
 tokenizer = AutoTokenizer.from_pretrained('gpt2')

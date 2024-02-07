@@ -546,21 +546,21 @@ def eval_step(state, batch, config, rng=None):
     return compute_metrics(logits, targets, mask, causal=config.causal, vocab_size=config.vocab_size)
 
 
-def predict(prompt: list, params: dict, config: TransformerConfig, seed: int = None, use_tqdm: bool = False) -> Tuple[jax.Array, dict]:
+def predict(prompt: list, params: dict, config: TransformerConfig, go_tok=1, end_tok=2, seed: int = None, use_tqdm: bool = False) -> Tuple[jax.Array, dict]:
     if config.causal:
-        if prompt[-1] != 1:
+        if prompt[-1] != go_tok:
             prompt = list(prompt)
-            prompt.append(1)
+            prompt.append(go_tok)
 
         if config.max_item_label > 0:
             return predict_with_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
         else:
-            return predict_no_lab(prompt, params, config, seed=seed, use_tqdm=use_tqdm)
+            return predict_no_lab(prompt, params, config, end_tok=end_tok, seed=seed, use_tqdm=use_tqdm)
     else:
         return predict_all(prompt, params, config, seed=seed)
 
 
-def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, max_len=None):
+def predict_no_lab(prompt, params, config, end_tok=2, seed=None, use_tqdm=False, max_len=None):
     prompt = jnp.array(prompt).astype(jnp.int32)
     assert len(prompt.shape) == 1
     prompt = prompt.reshape(1, -1)
@@ -580,7 +580,7 @@ def predict_no_lab(prompt, params, config, seed=None, use_tqdm=False, max_len=No
         rng, curr_rng = jax.random.split(rng)
         prompt, logits = get_next(prompt, params, config, rng=curr_rng)
 
-        if prompt[0,-1] == 2: # END == 2
+        if prompt[0,-1] == end_tok:
             break
 
     return prompt.flatten(), {'logits': logits}
