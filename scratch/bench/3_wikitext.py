@@ -8,6 +8,8 @@ author: William Tong (wtong@g.harvard.edu)
 import pickle
 
 from datasets import load_dataset
+import pandas as pd
+import seaborn as sns
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
 
@@ -24,7 +26,7 @@ print('RUN ID', run_id)
 n_iters = 1
 max_train_len = 10
 max_test_len = 25
-train_iters = 100_000
+train_iters = 250_000
 batch_size = 128
 
 # n_iters = 1
@@ -33,6 +35,7 @@ batch_size = 128
 # train_iters = 1_000
 # batch_size = 128
 
+end_tok = 50256 # hardcoded from GPT-2 tokenizer
 
 save_prefix = 'save/'
 cache_dir = None
@@ -65,13 +68,25 @@ for i in range(n_iters):
         Case('Wikitext', config=TransformerConfig(
             ds_generator_name='WikitextGenerator',
             ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
-            num_layers=6,
+            num_layers=4,
             emb_dim=512,
-            mlp_dim=4096,
+            mlp_dim=6144,
             **common_configs,
-        ), save_dir=f'wikitext_{run_id}')
-    ])
+        ), save_dir=f'wikitext_{run_id}'),
 
+        Case('Random', config=TransformerConfig(
+            ds_generator_name='RandomGenerator',
+            ds_generator_kwargs=FrozenDict(
+                lengths=tuple(range(1, max_train_len+1)),
+                special_token_override=end_tok, 
+                n_symbols=end_tok + 1, 
+                alphabet_size=end_tok),
+            num_layers=4,
+            emb_dim=512,
+            mlp_dim=6144,
+            **common_configs
+        ), save_dir=f'random_{run_id}')
+    ])
 
 for case in all_cases:
     case.save_dir = save_prefix + case.save_dir
@@ -81,9 +96,8 @@ for case in all_cases:
 run_train(all_cases, skip_existing=False)
 
 # <codecell>
-end_tok = 50256 # hardcoded from GPT-2 tokenizer
 
-for case in all_cases:
+for case in all_cases[1:]:
     print('TESTING', case.name)
     mngr = make_ckpt_manager(case.save_dir)
     r = mngr.restore(mngr.best_step())
@@ -100,7 +114,8 @@ for case in all_cases:
         )
 
         test_config = case.config.replace(
-            ds_generator_kwargs=FrozenDict({'split': 'test'})
+            ds_generator_name='WikitextGenerator',
+            ds_generator_kwargs=FrozenDict({'split': 'test', 'cache_dir': cache_dir})
         )
 
         case.res['acc_train'].append({'len': ex_len, 'acc': 
@@ -126,7 +141,36 @@ if scratch_dir is not None:
 with open('save/remote/case_wikitext.1130.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
-all_cases
+# <codecell>
+def to_df(key):
+    all_df = []
+    for case in all_cases:
+        curr_df = pd.DataFrame(case.res[key])
+        curr_df['name'] = case.name
+        all_df.append(curr_df)
+    df = pd.concat(all_df)
+    return df
+
+def plot_bench(df):
+    plt.gcf().set_size_inches(28, 3)
+    g = sns.barplot(df, x='len', y='acc', hue='name')
+    g.legend_.set_title('')
+
+    g.axvline(9.5, color='red', linestyle='dashed')
+
+    plt.tight_layout()
+
+plot_bench(to_df('acc_train'))
+plt.savefig('fig/wikitext_train.png')
+plt.show()
+
+plot_bench(to_df('acc_test'))
+plt.savefig('fig/wikitext_test.png')
+plt.show()
+
+plot_bench(to_df('acc_random'))
+plt.savefig('fig/wikitext_random.png')
+plt.show()
 
 # <codecell>
 tokenizer = AutoTokenizer.from_pretrained('gpt2')
