@@ -93,11 +93,10 @@ for case in all_cases:
     case.train_iters = train_iters
 
 # <codecell>
-run_train(all_cases, skip_existing=False)
+run_train(all_cases, skip_existing=True)
 
 # <codecell>
-
-for case in all_cases[1:]:
+for case in all_cases:
     print('TESTING', case.name)
     mngr = make_ckpt_manager(case.save_dir)
     r = mngr.restore(mngr.best_step())
