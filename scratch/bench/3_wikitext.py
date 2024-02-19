@@ -23,17 +23,17 @@ from model import *
 run_id = 1130 # NOTE: test seed (should use array parameter)
 print('RUN ID', run_id)
 
-# n_iters = 1
-# max_train_len = 10
-# max_test_len = 25
-# train_iters = 250_000
-# batch_size = 128
-
 n_iters = 1
-max_train_len = 3
-max_test_len = 5
-train_iters = 1_000
+max_train_len = 10
+max_test_len = 25
+train_iters = 250_000
 batch_size = 128
+
+# n_iters = 1
+# max_train_len = 3
+# max_test_len = 5
+# train_iters = 1_000
+# batch_size = 128
 
 end_tok = 50256 # hardcoded from GPT-2 tokenizer
 
@@ -62,11 +62,15 @@ common_configs = {
     'emb_dim': 512,
     'mlp_dim': 6144
 }
+
 # common_configs = {
 #     'nope_embedding': True,
 #     'num_layers': 2,
 #     'emb_dim': 128,
-#     'mlp_dim': 128
+#     'mlp_dim': 128,
+#     'num_heads': 2,
+#     'num_mlp_layers': 2,
+
 # }
 
 
