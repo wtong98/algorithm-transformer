@@ -25,8 +25,10 @@ class TransformerConfig:
     num_layers: int = 6
     emb_dim: int = 128
     mlp_dim: int = 128
+    num_heads: int = 1
     max_len: int = 256
     layer_norm: bool = False
+    num_mlp_layers: int = 0
     causal: bool = True
     non_causal_prompt: bool = False
     include_bos: bool = True

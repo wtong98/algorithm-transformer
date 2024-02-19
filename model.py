@@ -320,11 +320,29 @@ class TransformerBlock(nn.Module):
                 idxs=None):
 
         assert inputs.ndim == 3
-        x = SingleHeadSelfAttention(self.config)(inputs, decoder_mask, idxs=idxs)
+        if self.config.num_heads == 1:
+            x = SingleHeadSelfAttention(self.config)(inputs, decoder_mask, idxs=idxs)
+        else:
+            x = nn.MultiHeadDotProductAttention(num_heads=self.config.num_heads,
+                                                qkv_features=self.mlp_dim)(inputs_q=x, inputs_kv=x, mask=decoder_mask)
         x = x + inputs
 
         if self.config.layer_norm:
             x = nn.LayerNorm()(x)
+
+        if self.config.num_mlp_layers > 0:
+            pre_mlp_x = x
+            for i in range(self.config.num_mlp_layers):
+                if i == 0:
+                    x = nn.Dense(features=self.config.n_hidden)(pre_mlp_x)
+                else:
+                    x = nn.gelu(x)
+                    x = nn.Dense(features=self.config.n_hidden)(x)
+            
+            x = x + pre_mlp_x
+
+            if self.config.layer_norm:
+                x = nn.LayerNorm()(x)
 
         return x
 

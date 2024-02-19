@@ -23,17 +23,17 @@ from model import *
 run_id = 1130 # NOTE: test seed (should use array parameter)
 print('RUN ID', run_id)
 
-n_iters = 1
-max_train_len = 10
-max_test_len = 25
-train_iters = 250_000
-batch_size = 128
-
 # n_iters = 1
-# max_train_len = 3
-# max_test_len = 5
-# train_iters = 1_000
+# max_train_len = 10
+# max_test_len = 25
+# train_iters = 250_000
 # batch_size = 128
+
+n_iters = 1
+max_train_len = 3
+max_test_len = 5
+train_iters = 1_000
+batch_size = 128
 
 end_tok = 50256 # hardcoded from GPT-2 tokenizer
 
@@ -57,22 +57,41 @@ def init_common_kwargs():
     )
 
 common_configs = {
-    'nope_embedding': True
+    'nope_embedding': True,
+    'num_layers': 4,
+    'emb_dim': 512,
+    'mlp_dim': 6144
 }
+# common_configs = {
+#     'nope_embedding': True,
+#     'num_layers': 2,
+#     'emb_dim': 128,
+#     'mlp_dim': 128
+# }
 
 
 all_cases = []
 
+# TODO: test minimal, then run on cluster (may be slow with scratch issues)
 for i in range(n_iters):
     all_cases.extend([
         Case('Wikitext', config=TransformerConfig(
             ds_generator_name='WikitextGenerator',
             ds_generator_kwargs=FrozenDict(**init_common_kwargs()),
-            num_layers=4,
-            emb_dim=512,
-            mlp_dim=6144,
             **common_configs,
         ), save_dir=f'wikitext_{run_id}'),
+
+        Case('Uniq/Ord', config=TransformerConfig(
+            ds_generator_name='RandomGenerator',
+            ds_generator_kwargs=FrozenDict(
+                lengths=tuple(range(1, max_train_len+1)),
+                special_token_override=end_tok, 
+                n_symbols=end_tok + 1, 
+                ordered=True,
+                unique=True,
+                alphabet_size=end_tok),
+            **common_configs
+        ), save_dir=f'random_{run_id}'),
 
         Case('Random', config=TransformerConfig(
             ds_generator_name='RandomGenerator',
@@ -81,9 +100,6 @@ for i in range(n_iters):
                 special_token_override=end_tok, 
                 n_symbols=end_tok + 1, 
                 alphabet_size=end_tok),
-            num_layers=4,
-            emb_dim=512,
-            mlp_dim=6144,
             **common_configs
         ), save_dir=f'random_{run_id}')
     ])
@@ -93,7 +109,7 @@ for case in all_cases:
     case.train_iters = train_iters
 
 # <codecell>
-run_train(all_cases, skip_existing=True)
+run_train(all_cases, skip_existing=False)
 
 # <codecell>
 for case in all_cases:
@@ -104,12 +120,18 @@ for case in all_cases:
 
     case.res['acc_train'] = []
     case.res['acc_test'] = []
+    case.res['acc_uao'] = []
     case.res['acc_random'] = []
 
     for ex_len in tqdm(reversed(range(1, max_test_len + 1)), total=max_test_len):
         random_config = case.config.replace(
             ds_generator_name='RandomGenerator',
             ds_generator_kwargs=FrozenDict(special_token_override=end_tok, n_symbols=end_tok + 1, alphabet_size=end_tok)  # hardcoded from GPT-2 tokenizer
+        )
+
+        uao_config = case.config.replace(
+            ds_generator_name='RandomGenerator',
+            ds_generator_kwargs=FrozenDict(special_token_override=end_tok, n_symbols=end_tok + 1, alphabet_size=end_tok, unique=True, ordered=True)  # hardcoded from GPT-2 tokenizer
         )
 
         test_config = case.config.replace(
@@ -122,6 +144,9 @@ for case in all_cases:
 
         case.res['acc_test'].append({'len': ex_len, 'acc': 
                                         evaluate_acc(ex_len, params, test_config, go_tok=end_tok, end_tok=end_tok)})
+
+        case.res['acc_uao'].append({'len': ex_len, 'acc': 
+                                        evaluate_acc(ex_len, params, uao_config, go_tok=end_tok, end_tok=end_tok)})
 
         case.res['acc_random'].append({'len': ex_len, 'acc': 
                                         evaluate_acc(ex_len, params, random_config, go_tok=end_tok, end_tok=end_tok)})
@@ -140,6 +165,7 @@ if scratch_dir is not None:
 with open('save/remote/case_wikitext.1130.pkl', 'rb') as fp:
     all_cases = pickle.load(fp)
 
+all_cases[0].res
 # <codecell>
 def to_df(key):
     all_df = []
@@ -159,6 +185,7 @@ def plot_bench(df):
 
     plt.tight_layout()
 
+# TODO: rerun with ordered subset too <-- STOPPED HERE
 plot_bench(to_df('acc_train'))
 plt.savefig('fig/wikitext_train.png')
 plt.show()
