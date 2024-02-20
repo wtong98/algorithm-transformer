@@ -58,9 +58,9 @@ def init_common_kwargs():
 
 common_configs = {
     'nope_embedding': True,
-    'num_layers': 4,
+    'num_layers': 6,
     'emb_dim': 512,
-    'mlp_dim': 6144
+    'mlp_dim': 512
 }
 
 # common_configs = {
@@ -95,7 +95,7 @@ for i in range(n_iters):
                 unique=True,
                 alphabet_size=end_tok),
             **common_configs
-        ), save_dir=f'random_{run_id}'),
+        ), save_dir=f'uao_{run_id}'),
 
         Case('Random', config=TransformerConfig(
             ds_generator_name='RandomGenerator',
