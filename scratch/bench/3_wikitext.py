@@ -60,7 +60,10 @@ common_configs = {
     'nope_embedding': True,
     'num_layers': 6,
     'emb_dim': 512,
-    'mlp_dim': 512
+    'mlp_dim': 512,
+    'num_heads': 4,
+    'num_mlp_layers': 3,
+    'layer_norm': True
 }
 
 # common_configs = {
