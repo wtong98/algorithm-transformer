@@ -29,6 +29,7 @@ class TransformerConfig:
     max_len: int = 256
     layer_norm: bool = False
     num_mlp_layers: int = 0
+    dropout_rate: float = 0
     causal: bool = True
     non_causal_prompt: bool = False
     include_bos: bool = True

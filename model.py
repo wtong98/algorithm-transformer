@@ -317,7 +317,8 @@ class TransformerBlock(nn.Module):
     def __call__(self,
                 inputs,
                 decoder_mask=None,
-                idxs=None):
+                idxs=None,
+                training=False):
 
         assert inputs.ndim == 3
         x = inputs
@@ -327,6 +328,9 @@ class TransformerBlock(nn.Module):
         else:
             x = nn.MultiHeadDotProductAttention(num_heads=self.config.num_heads,
                                                 qkv_features=self.config.mlp_dim)(inputs_q=x, inputs_kv=x, mask=decoder_mask)
+        if self.config.dropout_rate > 0:
+            nn.Dropout(self.config.dropout_rate, deterministic=not training)(x)
+
         x = x + inputs
 
         if self.config.layer_norm:
@@ -340,6 +344,9 @@ class TransformerBlock(nn.Module):
                 else:
                     x = nn.gelu(x)
                     x = nn.Dense(features=self.config.mlp_dim)(x)
+
+            if self.config.dropout_rate > 0:
+                nn.Dropout(self.config.dropout_rate, deterministic=not training)(x)
             
             x = x + pre_mlp_x
 
@@ -357,7 +364,8 @@ class Transformer(nn.Module):
     def __call__(self,
                 inputs,
                 prompt_mask=None,
-                labels=None):
+                labels=None,
+                training=False):
 
         config = self.config
         assert inputs.ndim == 2  # (batch, len)
@@ -399,7 +407,8 @@ class Transformer(nn.Module):
                 config=config)(
                         y,
                         decoder_mask=decoder_mask,
-                        idxs=rand_idxs)
+                        idxs=rand_idxs,
+                        training=training)
 
         logits = nn.Dense(
             config.vocab_size + config.max_item_label + 1,
@@ -510,15 +519,16 @@ def train_step(state, batch, config, rng=None, report_metrics=False):
     # print('LABS', labels)
     
     rng = jax.random.fold_in(rng, state.step)
-    rng, global_rng = jax.random.split(rng)
+    rng, global_rng, dropout_rng = jax.random.split(rng, num=3)
 
     def loss_fn(params):
-        logits = Transformer(config).apply(
+        logits = state.apply_fn(
             {'params': params},
             inputs,
             prompt_mask=prompt_mask,
             labels=labels,
-            rngs={'rng': global_rng}
+            rngs={'rng': global_rng, 'dropout': dropout_rng},
+            training=True
         )
         
         tok_logits, label_logits = logits[...,:config.vocab_size], logits[...,config.vocab_size:]
@@ -723,6 +733,7 @@ config = TransformerConfig(
     rel_pos_att=False,
     non_causal_prompt=False,
     nope_embedding=True,
+    dropout_rate=0.1,
 
     # ds_generator_name='CfgGenerator',
     # ds_generator_kwargs=FrozenDict({

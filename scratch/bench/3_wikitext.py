@@ -192,17 +192,21 @@ def plot_bench(df):
 
     plt.tight_layout()
 
-# TODO: rerun with ordered subset too <-- STOPPED HERE
+# TODO: download random to check model; add scrambled uao
 plot_bench(to_df('acc_train'))
-plt.savefig('fig/wikitext_train.png')
+# plt.savefig('fig/wikitext_train.png')
 plt.show()
 
 plot_bench(to_df('acc_test'))
-plt.savefig('fig/wikitext_test.png')
+# plt.savefig('fig/wikitext_test.png')
+plt.show()
+
+plot_bench(to_df('acc_uao'))
+# plt.savefig('fig/wikitext_uao.png')
 plt.show()
 
 plot_bench(to_df('acc_random'))
-plt.savefig('fig/wikitext_random.png')
+# plt.savefig('fig/wikitext_random.png')
 plt.show()
 
 # <codecell>

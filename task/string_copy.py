@@ -34,6 +34,8 @@ def parse_sampling_strategy(probs, lengths, sampling_strategy):
         elif sampling_strategy == 'inv_zipf':
             weights = np.array(lengths)
             probs = weights / np.sum(weights)
+        elif sampling_strategy == 'unif':
+            probs = 1 / len(lengths)
         else:
             raise ValueError(f'sampling strategy unrecognized: {sampling_strategy}')
 
@@ -60,10 +62,10 @@ class InterleaveGenerator:
 
 class RandomGenerator(BaseGenerator):
     def __init__(self, lengths, alphabet_size=2,
-             ordered=False, unique=False, p_replace_rand=0,
+             ordered=False, unique=False, permute=False, p_replace_rand=0,
              special_token_override=None, n_symbols=None,
              probs=None, sampling_strategy='zipf',
-             seed=None):
+             seed=None, reset_rng_for_data=True):
 
         self.lengths = to_list(lengths)
         
@@ -74,17 +76,27 @@ class RandomGenerator(BaseGenerator):
         self.p_replace_rand = p_replace_rand
         self.ordered = ordered
         self.unique = unique
+        self.permute = permute
         self.rng = np.random.default_rng(seed)
         self.alphabet_size = alphabet_size
 
+        if self.ordered and self.permute:
+            self.permute_lookup = self.rng.permutation(self.alphabet_size)
+
         self.special_token_override = special_token_override
         self.n_symbols = n_symbols
+
+        if reset_rng_for_data:
+            self.rng = np.random.default_rng(None)
     
     def __next__(self):
         length = self.rng.choice(self.lengths, p=self.probs)
         pattern = self.rng.choice(self.alphabet_size, size=length, replace=not self.unique)
         if self.ordered:
             pattern = np.sort(pattern)
+
+            if self.permute:
+                pattern = self.permute_lookup[pattern]
         
         if self.p_replace_rand > 0:
             replace_idxs = self.rng.binomial(n=1, p=self.p_replace_rand, size=length)
@@ -516,7 +528,7 @@ if __name__ == '__main__':
     )
 
     ds, config = CopyDataset.from_config(config)
-    print(next(iter(ds)))
+    # print(next(iter(ds)))
 
 
 
@@ -545,6 +557,28 @@ if __name__ == '__main__':
 
     # print(ds.gen.nt_to_ts)
     # print(ds.gen.all_terminals)
+
+    from flax.core.frozen_dict import FrozenDict
+    max_train_len = 4
+    end_tok = 10
+    
+    config = TransformerConfig(
+        ds_generator_name='RandomGenerator',
+        ds_generator_kwargs=FrozenDict(
+            lengths=max_train_len,
+            special_token_override=end_tok,
+            n_symbols=end_tok + 1,
+            alphabet_size=end_tok,
+            unique=True,
+            ordered=True,
+            permute=True,
+            seed=3),
+    )
+
+    ds, config = CopyDataset.from_config(config)
+    print(next(iter(ds)))
+    print(ds.gen.permute_lookup)
+
 # %%
 # import math
 
