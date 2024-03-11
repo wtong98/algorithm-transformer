@@ -35,7 +35,7 @@ def parse_sampling_strategy(probs, lengths, sampling_strategy):
             weights = np.array(lengths)
             probs = weights / np.sum(weights)
         elif sampling_strategy == 'unif':
-            probs = 1 / len(lengths)
+            probs = np.ones(len(lengths)) / len(lengths)
         else:
             raise ValueError(f'sampling strategy unrecognized: {sampling_strategy}')
 

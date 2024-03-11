@@ -26,7 +26,7 @@ print('RUN ID', run_id)
 n_iters = 1
 max_train_len = 10
 max_test_len = 25
-train_iters = 250_000
+train_iters = 150_000
 batch_size = 128
 
 # n_iters = 1
@@ -66,6 +66,16 @@ common_configs = {
     'layer_norm': True
 }
 
+rand_configs = {
+    'nope_embedding': True,
+    'num_layers': 4,
+    'emb_dim': 4096,
+    'mlp_dim': 4096,
+    'num_heads': 4,
+    'num_mlp_layers': 3,
+    'layer_norm': False
+}
+
 # common_configs = {
 #     'nope_embedding': True,
 #     'num_layers': 2,
@@ -79,7 +89,6 @@ common_configs = {
 
 all_cases = []
 
-# TODO: test minimal, then run on cluster (may be slow with scratch issues)
 for i in range(n_iters):
     all_cases.extend([
         Case('Wikitext', config=TransformerConfig(
@@ -107,7 +116,7 @@ for i in range(n_iters):
                 special_token_override=end_tok, 
                 n_symbols=end_tok + 1, 
                 alphabet_size=end_tok),
-            **common_configs
+            **rand_configs
         ), save_dir=f'random_{run_id}')
     ])
 
@@ -146,8 +155,13 @@ for case in all_cases:
             ds_generator_kwargs=FrozenDict({'split': 'test', 'cache_dir': cache_dir})
         )
 
+        train_config = case.config.replace(
+            ds_generator_name='WikitextGenerator',
+            ds_generator_kwargs=FrozenDict({'split': 'train', 'cache_dir': cache_dir})
+        )
+
         case.res['acc_train'].append({'len': ex_len, 'acc': 
-                                        evaluate_acc(ex_len, params, case.config, go_tok=end_tok, end_tok=end_tok)})
+                                        evaluate_acc(ex_len, params, train_config, go_tok=end_tok, end_tok=end_tok)})
 
         case.res['acc_test'].append({'len': ex_len, 'acc': 
                                         evaluate_acc(ex_len, params, test_config, go_tok=end_tok, end_tok=end_tok)})
